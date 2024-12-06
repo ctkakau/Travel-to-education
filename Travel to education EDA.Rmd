@@ -1,0 +1,769 @@
+---
+title: "DATA581:  Waka Kotahi - Travel to education"
+author: 'Chad Kakau: 300212228'
+date: "2024-11-29"
+output: html_document
+
+---
+
+```{r setup, include=FALSE, warnings = FALSE}
+knitr::opts_chunk$set(include = FALSE, echo = FALSE)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(sf)
+library(sys)
+# set theme for ggplot2
+ggplot2::theme_set(theme_classic())
+# turn off scientific notation
+options(scipen = n)
+
+```
+
+# Travel to education project
+
+This project reviews the importance of 'travel to education' on New Zealand's land transport system.  
+
+Essentially an exploratory analysis, the project will draw on officially available information to identify any insights that may become apparent.  Data is drawn from a range of sources including:
+
+  - Statistics New Zealand Census data (from 2013, 2018, 2023)
+  - Reporting prepared for Waka Kotahi that models expected travel times
+
+
+
+
+
+
+
+
+# Introduction
+SOMETHING ABOUT 
+  
+  
+  
+
+```{r readInDimTablesLong, include = FALSE, echo = FALSE} 
+# # read in dimension tables that link SA1 to SA2, SA3, Territorial and regional authorities
+# there are more elegant ways to get these in but, this is for transparency
+
+if(!file.exists('statistical_areas.csv')){
+  if (!exists('statistical_areas')){
+    
+    ### ensure all csv files are in the same folder and then update folder path here: ###
+    sa_folder<- c("C:/Users/chad/Downloads/")
+    
+    
+    # read in each csv file
+    sa1_to_sa2 <- read.csv(
+      paste(sa_folder, "SA1 to SA2 2023.csv", sep = ""),
+        skip = 7, header = F)
+    sa1_to_sa2 <- sa1_to_sa2[, c(1,4, 5)]
+    colnames(sa1_to_sa2) <- c("SA1", "SA2", "SA2_chx")
+    
+    sa1_to_sa3 <- read.csv(
+      paste(sa_folder, "SA1 to SA3 2023.csv", sep = ""),
+        skip = 7, header = F)
+    sa1_to_sa3 <- sa1_to_sa3[, c(1,4, 5)]
+    colnames(sa1_to_sa3) <- c("SA1", "SA3", "SA3_chx")
+    
+    sa1_to_rc <- read.csv(
+      paste(sa_folder, "SA1 to RC.csv", sep = ""),
+        skip = 7, header = F)
+    sa1_to_rc <- sa1_to_rc[, c(1, 5)]
+    colnames(sa1_to_rc) <- c("SA1", "Regional Council")
+    
+    sa2_to_ta <- read.csv(
+      paste(sa_folder, "SA2 to TA 2023.csv", sep = ""),
+        skip = 7, header = F)
+    sa2_to_ta <- sa2_to_ta[, c(1, 5)]
+    colnames(sa2_to_ta) <- c("SA2", "Territorial Authority")
+    
+    
+    # consolidate into a single object
+    statistical_areas <- sa1_to_sa2 %>%
+      left_join(sa1_to_sa3, by = "SA1") %>%
+      left_join(sa1_to_rc, by = "SA1") %>%
+      left_join(sa2_to_ta, by = "SA2")
+    
+    # tidy up workspace
+    rm(list = c('sa1_to_sa2', 'sa1_to_sa3', 'sa1_to_rc', 'sa2_to_ta'))
+  }
+  write.csv(statistical_areas, 'statistical_areas.csv')
+  rm(sa_folder)
+} else {
+  # read in from the csv file generated in long version
+  stat_areas <- read.csv('statistical_areas.csv', row.names = 'X')
+}
+
+```
+
+
+```{r readInCensusData, include = FALSE, echo=FALSE}
+# read in census data from local file
+path <- c("C:/Users/chad/Downloads/STATSNZ,CEN23_TBT_012,1.0+all.csv")
+prev_written <- 'census_2018_2023.csv'
+
+# check for the created census_2018_2023.csv file and if not exists, extract 
+# data and create it
+if (!file.exists(prev_written)) {
+  begin <- Sys.time()
+  census <- read.csv(path)
+  
+  # remove unused columns: DATAFLOW, OBS_STATUS
+  census$DATAFLOW <- NULL
+  census$OBS_STATUS..Observation.Status <- NULL
+  
+  # retain just the used variables:  travel to education by educational institution address (tee)
+  # travel to education by usual residence (teu); income bracket (ib); highest qualification (hq)
+  # residence 1 year ago (1y) and resident 5 years ago (5y)
+  census <- census %>%
+    # dplyr::filter(stringr::str_starts(CEN23_TBT_IND_003..Variable.codes ,
+    #                                   "(?i)1y|5y|tee|teu|ib|hq")) %>%
+  
+    # remove empty values (censored data)
+    dplyr::filter(!is.na(OBS_VALUE))%>%
+  
+    # remove rows with variable totals
+    dplyr::filter(!stringr::str_detect(CEN23_TBT_GEO_002..Area,
+                                        "(?i)Total")) %>%
+  
+    # split Variable.Codes column into code and variable text
+    tidyr::separate_wider_delim(
+      CEN23_TBT_IND_003..Variable.codes,
+      delim = ': ',
+      names = c('Var_Code', 'Variable')) %>%
+  
+    # split Statistical areas column into code and variable text
+    tidyr::separate_wider_delim(
+      CEN23_TBT_GEO_002..Area,
+      delim = ': ',
+      names = c('SA1', NA)) %>%
+  
+    # convert type SA1 to integer
+    mutate(SA1 = as.integer(SA1)) %>%
+    # add geographic areas to main dataset
+      left_join(y = stat_areas,
+                by = join_by(SA1),
+                unmatched = 'error',
+                relationship = 'many-to-one') %>%
+  
+    # create shortCode column for summary totals
+    mutate(shortCode = ifelse(substr(Var_Code, 1, 2) == "1y","1y",
+      ifelse(substr(Var_Code, 1, 2) == "5y", "5y",
+      sub("^(\\D+).*", "\\1", Var_Code)))
+      
+      
+      
+      # substr(Var_Code, 1, 3) == "tee" ~ "tee",
+      # substr(Var_Code, 1, 3) == "teu" ~ "teu",
+      # substr(Var_Code, 1, 2) == "ib" ~ "ib",
+      # substr(Var_Code, 1, 2) == "hq" ~ "hq")
+      )
+  
+  # regex substring
+  # unique(sub("^(\\D+).*", "\\1", unique(census$Var_Code)))
+  # rename columns
+  names(census)[4:5] <- c("Year", "Value")
+  
+  # # performance
+  end <- Sys.time()
+  loadingTime <- end - begin
+  loadingTime
+  # around 1.5 min to load and filter to desired set
+  
+  # write to file and reload from file
+  write.csv(census, prev_written)
+
+} else {
+  
+  begin <- Sys.time()
+  # from here once the csv file has been created
+  census <- read.csv('census_2018_2023.csv', row.names = 'X')
+  end <- Sys.time()
+  loadingTime <- end - begin
+  loadingTime
+}
+  
+#  create object to hold the TS (total stated) values
+totals <- census %>% 
+  # filter in  the TS (Total Stated) rows
+  dplyr::filter(stringr::str_ends(Var_Code,"(?i)TS")) 
+
+
+# create a TS (total stated) column to hold the TS for each SA1, year, and topic
+census <- census %>% 
+  # filter in  the Total and Total Stated rows
+  dplyr::filter(!stringr::str_detect(Var_Code,"(?i)TS|Total|Med")) %>%
+  
+  # join census and totals table 
+  left_join(y = totals[,c("SA1", "shortCode", "Year", "Value")],
+            by = c("SA1", "Year", "shortCode"),
+            relationship = 'many-to-one'
+            ) %>%
+  
+  # rename to useful column names
+  rename(c(Value = "Value.x", TS = "Value.y"))
+```
+
+
+
+```{r possibleDatasets}
+# # pivot the census data by shortCode, key= SA1
+# census_wide <- census %>%
+#   pivot_wider(id_cols =  c(Regional.Council, Variable),
+#               names_from = shortCode,
+#               values_from = Value,
+#               values_fn = sum)
+# 
+# # summarise data to a smaller set
+# r_census <- census %>%
+#   group_by(Year, shortCode, Regional.Council, Territorial.Authority, SA2_chx, Variable) %>%
+#   summarise(count = sum(Value))
+# 
+# 
+# # filter a dataset to focus on Auckland
+# akl_census <- census %>%
+#   filter(Regional.Council == "Auckland Region") %>%
+#   group_by(Year, shortCode, SA3_chx, SA2_chx, Variable) %>%
+#   summarise(count = sum(Value)) 
+```
+
+```{r readInShapeFiles}
+if (!exists('shp_sa1')){
+  # shapefiles are available from StatsNZ Geographic Data Service at: 
+  # https://datafinder.stats.govt.nz/ 
+  shp_folder <-  c("C:/Users/chad/OneDrive - Victoria University of Wellington - STUDENT/DATA581 - waka kotahi/StatsNZShapeFiles/")
+  shp_sa1 <- paste0(shp_folder, "statistical-area-1-2023-generalised.shp", sep = "")
+  shp_sa2 <- paste0(shp_folder, "statistical-area-2-2023-generalised.shp", sep = "")
+  shp_ta <- paste0(shp_folder, "territorial-authority-2023-clipped-generalised.shp", sep = "")
+  shp_rc <- paste0(shp_folder, "regional-council-2023-clipped-generalised.shp", sep = "")
+}
+```
+
+```{r travelToEducationByUsuallyResident}
+# object to hold the travel to education data without totals
+teu <- census %>% 
+  dplyr::filter(stringr::str_starts(Var_Code , 
+                                    "(?i)teu")) 
+
+# object to report the main means of travel and create short names
+teuMode <- unique(teu$Variable)
+mode_labeller <- data.frame(Variable = teuMode, TravelMode = c("Home", "Drive", "Passenger", "Bicycle", "Walk", 
+                                  "School bus", "Public bus", "Train",
+                                  "Ferry", "Other", "Not elsewhere"))
+
+# object to report the main regions and create short names
+teuRegion <- unique(teu$Regional.Council)
+Region <- unlist(strsplit(teuRegion, " Region"))
+region_labeller <- data.frame(Regional.Council = teuRegion, Region = Region )
+
+teu <- teu %>%
+  left_join(y = mode_labeller,
+            by = c("Variable"), 
+            relationship = 'many-to-one') %>%
+  left_join(y = region_labeller,
+            by = c("Regional.Council"),
+            relationship = 'many-to-one')
+
+rm(list = c("teuMode", "mode_labeller", "teuRegion", "region_labeller", "Region"))
+
+
+# summarise data at regional level
+census_TA <- census %>%
+  group_by(Variable, Territorial.Authority)%>%
+  summarise(total = sum(Value))
+  
+```
+
+# Methodology  
+
+Overall process (and then add some more detail for each bullet point):  
+
+  1. Describe data (summarise data based on Stats NZ and objectives of report)
+  1. extract, clean, load data (define sources, transformations)
+  1. Fit statistical models (mutually independent ((YM), (YR), (YM,YR)))
+  1. Describe regional proportions (attributable to travel to education)
+  1. Describe key modes by year (based on YM)
+  1. Describe key regions by year (based on YR)
+  1. Describe regional differences? 
+  1. visualise regions with biggest changes (total and by mode) !these are the ones that have changed the most (future_indicators?)
+  1. visualise regions with biggest proportions (by mode and changes) !these are the ones that have most people
+  1. Report results
+  1. Discuss results (are there any hypotheses?  they should be in introduction - possibly working from home, possibly shift to remote access work and study, possibly reduced international student numbers, possibly change in proportions of work vs study, possibly shift from urban to rural)
+  1. Conclusion (is there reasonable evidence to support any of the hypotheses? where to look for more evidence and what to expect or investigate)
+
+## Describe the data, where it comes from, what it describes
+
+The majority of data used in this analysis comes from data collected and presented by Statistics New Zealand as summarised totals from Census 2018 and Census 2023.  The primary census questions of interest relate to how people travel to their place of education. 'Travel to education' provides respondents with several options for describing the method they used to travel to education on the day of the census.  The question was introduced as a persistent question in 2018 and was asked then and in 2023.  _The majority of this analysis considers only the positive responses to this question (i.e. people who were currently studying at the time of the census). [IT MAY BE MORE APPROPRIATE TO TAKE AS RATES RATHER THAN FREQUENCIES]_  
+
+The census asks many questions about life in New Zealand so in addition to the primary topic of interest for this analysis there are other additional questions that may give useful context or insights, so additional responses are available:
+
+Data for this project has come from several sources including:  
+
+  - Statistics New Zealand:  
+    - Census data retrieved from [Aotearoa Data Explorer](https://explore.data.stats.govt.nz/)  
+      - [Totals by topic for individuals, (SA1), 2013, 2018, and 2023 Censuses](https://explore.data.stats.govt.nz/vis?fs%5B0%5D=2023+Census%2C0%7CTransport%23CAT_TRANSPORT%23&pg=0&fc=2023+Census&bp=true&snb=6&df%5Bds%5D=ds-nsiws-disseminate&df%5Bid%5D=CEN23_TBT_012&df%5Bag%5D=STATSNZ&df%5Bvs%5D=1.0&dq=.SA1Total.2013%2B2018%2B2023&ly%5Brw%5D=CEN23_TBT_IND_003&ly%5Bcl%5D=CEN23_YEAR_001&to%5BTIME%5D=false)
+    - Geographic information retrieved from [Stats NZ Geographic Data Service](https://datafinder.stats.govt.nz/)  
+      - [Statistical Area 1 2023 (generalised) shapefiles](https://datafinder.stats.govt.nz/layer/111208-statistical-area-1-2023-generalised/)
+      - [Statistical Area 2 2023 (generalised) shapefiles](https://datafinder.stats.govt.nz/layer/111227-statistical-area-2-2023-generalised/)
+      - [Statistical Area 3 2023 (generalised) shapefiles](https://datafinder.stats.govt.nz/layer/111202-statistical-area-3-2023-generalised/)
+      - [Territorial Authority 2023 (generalised) shapefiles](https://datafinder.stats.govt.nz/layer/111194-territorial-authority-2023-generalised/)
+      - [Regional Council 2023 (generalised) shapefiles](https://datafinder.stats.govt.nz/layer/111182-regional-council-2023-generalised/)
+    - Classification tables for Statistical Areas 1, 2, 3, Territorial Authorities and Regional Authorities retrieved from [Stats NZ Aria, concept and classification management system](https://aria.stats.govt.nz/aria/)  
+      - [Statistical Area 1 2023 V1.0.0](https://aria.stats.govt.nz/aria/#ClassificationView:uri=http://stats.govt.nz/cms/ClassificationVersion/sEMu6YTFdWqenzhR)
+      - [Statistical Area 1 to Statistical Area 2 2023](https://aria.stats.govt.nz/aria/#ConcordanceView:uri=http://stats.govt.nz/cms/ConcordanceVersion/JxtI2hDKkMODwN1U)
+      - [Statistical Area 1 to Statistical Area 3 2023](https://aria.stats.govt.nz/aria/#ConcordanceView:uri=http://stats.govt.nz/cms/ConcordanceVersion/nC0BBUXrbjn6exsh)
+      - [Statistical Area 1 to Territorial Authority 2023](https://aria.stats.govt.nz/aria/#ConcordanceView:uri=http://stats.govt.nz/cms/ConcordanceVersion/rosoyMbii211crP0)
+      - [Statistical Area 1 to Regional Council 2023](https://aria.stats.govt.nz/aria/#ConcordanceView:uri=http://stats.govt.nz/cms/ConcordanceVersion/oui0H1okeUvIdg9P)
+      
+      
+_MAKE A COMMENT ON QUALITY (very high) OR NATURE (periodic, snapshot on census day, but is a survey of the population) OF CENSUS DATA AND GENERAL ASSUMPTIONS_
+
+More detailed information about how to use 2023 Census data is available in the StatsNZ [2023 Census data user guide](https://www.stats.govt.nz/assets/Methods/2023-Census-data-user-guide/2023-census-data-user-guide.pdf).
+
+
+
+## Describe the sources and transformation methods, include excel and R methods
+
+This analysis was emulated across two different software platforms:  Microsoft Excel and RStudio.  Microsoft Excel is readily available within most government organisations in New Zealand and was used to ensure replicability and reproducibility for future census result sets.  RStudio offers a greater array of options for analysing, modelling, visualising, and reporting both methods and findings, but may not be available for government or organisational groups.  A github repository for developing and maintaining R scripts is also produced.  This section describes the sources and transformation methods used for preparing raw data for analysis: Raw census data; Processed census data; geographic hierarchies; and geographic information.
+
+### Raw census data  
+
+Raw census data was accessed by searching for the term "Main means of travel" in the [Aotearoa Data Explorer search engine](https://explore.data.stats.govt.nz/).  Data for all census variables is available at the result ["Totals by topic for individuals, (SA1), 2013, 2018, and 2023 Censuses (Download recommended - see overview for more information)"](https://explore.data.stats.govt.nz/vis?tm=Main+means+of+travel&pg=0&snb=16&df%5Bds%5D=ds-nsiws-disseminate&df%5Bid%5D=CEN23_TBT_012&df%5Bag%5D=STATSNZ&df%5Bvs%5D=1.0&dq=.SA1Total.2013%2B2018%2B2023&to%5BTIME%5D=false) is selected.  This full dataset is downloaded using the "Unfiltered data in tabular text (CSV)" option.  This downloads responses for all variables in the census and can be filtered once ingested.  Alternatively, smaller datasets that focus only on variables of interest (for instance those relating to travel to education by usual residence address (variable code beginning with "teu") and those relating to travel to education by address of educational institution (variable code beginning with "tee")).  The full dataset is around 4.5GB so can take a few minutes to download.
+
+Transforming the raw census data involves stripping unused columns, filtering unused rows (i.e. variables), splitting the variables into short codes and full text columns, removing unnecessary text from the statistical area columns and then renaming columns with more user friendly labels.  The raw data csv file has six columns:  
+
+  - __DATAFLOW__: contains the identifier for the Stats NZ dataflow, equivalent to search name - not used
+  - __CEN23_TBT_IND_003: Variable codes__: contains the variable codes, with format "[Shortcode]: [FullText]" - retained and split into "Var_Code" and "Variable" columns
+  - __CEN_TBT_GEO_002: Area__: contains the statistical area identifiers, with format "[SA1]: [SA1]" - retained all data before delimiter ": " and column renamed to "SA1"
+  - __CEN23_YEAR_001: Census year__: contains the census year - retained, column renamed to "Year"
+  - __OBS_VALUE__: contains the aggregated response count for the statistical area - retained and column renamed to "Value"
+  - __OBS_STATUS: Observation status__: contains additional information when no value is given (e.g. "confidential" etc.) - not used
+  
+After processing the raw census data the resulting data frame has five columns with the number of rows determined by which variables are filtered in:  
+
+  - __Var_Code__: character, short code for identifying (and filtering) variables
+  - __Variable__: character, full text for variable/response
+  - __SA1__: character, identifier for statistical area 1
+  - __Year__: integer, identifier for census year
+  - __Value__: integer, total count for individual responses within the statistical area 1
+  
+### Processed census data
+
+Processed census data was compiled by a third party on behalf of Waka Kotahi and estimates the accessibility of education by considering the proximity of education institutions to the population within a statistical area 1 partition.  Using the open map system to determine walking paths, cycling routes, and vehicle paths, combined with travel time data based on GPS travel data, the processed census data estimates accessibility to education as number of people that could reach an educational institution within 15 minute blocks (e.g. within 15 minutes, within 30 minutes, within 45 minutes etc.).  This data is received as individual tables relating to geographic groupings (e.g. city, region, district etc.) and is processed to remove summarised data and convert to long table form.
+
+__DESCRIBE THE DATA TABLE PRODUCED BY THIS PROCESS__
+
+
+### Geographic hierarchies
+
+Geographic hierarchies describe the way that statistical areas fit together to form groupings by location, beginning with the smallest statistical area a meshblock.  The next sized grouping is statistical area 1 (about the size of a neighbourhood block in an urban context).  The statistical area 1 aims to include between 100-500 residents  Statistical area 1 can then be aggregated into three different groupings:  statistical area 2, statistical area 3, and regional council.  Statistical area 2 aims to include around 1,000-4,000 residents and can be likened to a small suburb in an urban context, but may include a larger geographic area in rural contexts.  Statistical area 3 aims to include around ,5000 to 10,000 residents and can be likened to a major suburb in an urban context, an urban population within a sparsely populated geographic location (e.g. Alexandra), or a group of small urban areas with less than 5,000 residents etc.  Geographies defined by Regional Council comprise groupings of statistical area 1 blocks.  Territorial authorities comprise groupings of either statistical area 2 or statistical area 3 blocks and thus, indirectly, of statistical area 1 blocks.
+
+In order to represent aggregations of census data at these levels this research retrieved concordance data from the Aria classification management system, including:
+
+  - [Statistical Area 1 to Statistical Area 2 2023](https://aria.stats.govt.nz/aria/#ConcordanceView:uri=http://stats.govt.nz/cms/ConcordanceVersion/JxtI2hDKkMODwN1U)
+  - [Statistical Area 1 to Statistical Area 3 2023](https://aria.stats.govt.nz/aria/#ConcordanceView:uri=http://stats.govt.nz/cms/ConcordanceVersion/nC0BBUXrbjn6exsh)
+  - [Statistical Area 1 to Territorial Authority 2023](https://aria.stats.govt.nz/aria/#ConcordanceView:uri=http://stats.govt.nz/cms/ConcordanceVersion/rosoyMbii211crP0)
+  - [Statistical Area 1 to Regional Council 2023](https://aria.stats.govt.nz/aria/#ConcordanceView:uri=http://stats.govt.nz/cms/ConcordanceVersion/oui0H1okeUvIdg9P)
+ 
+These data tables are downloaded to csv files, imported, stripped of unnecessary data and then merged to form a single table that maps each statistical area 1 to its corresponding statistical areas 2 and 3, territorial authority, and regional authority.  The resulting table has around 33,000 rows with 7 columns
+
+
+### Geographic information
+
+Geographic information consists of shapefiles that define the boundaries of geographic areas (e.g. statistical area 1, statistical area 2, territorial authority etc.) and can be used to show display those areas on a map.  Geographic information was downloaded from the [Stats NZ Geographic Data Service](https://datafinder.stats.govt.nz/), and include shapefiles for:  
+
+  - statistical area 1
+  - statistical area 2
+  - statistical area 3
+  - territorial authority, and
+  - regional council
+  
+Each download includes additional metadata and supporting documentation, but the key shapefile information is contained in the .shp file.  Geographic information is linked to the associated geographic area by either the area's code or full text name and is keyed to the "SA1" column, allowing for aggregation of statistical area 1 data across the different layers of the hierarchy.
+
+## Describe and fit the models ( (YM), (YR), (YM, YR))
+
+__POISSON REGRESSION ASSUMPTIONS__
+  
+  - POISSON RESPONSE - response variable is a count per unit of time or space, described by a poisson distribution
+  - Independence - observations must be independent of one another
+  - Mean = Variance
+  - Linearity+ the log of the mean rate, $\log(\lambda)$ must be a linear function of x
+
+
+The census data comprises count data that is collected from areas that are consistent over time (in the sense that at each census, previous years' results are rebased according to the current year's geographic boundaries).
+
+
+
+have similar sized populations
+This analysis fits four models using the Poisson Regression Generalised Linear Model.  
+
+
+## Describe regional proportions (totals by year, then proportion that are studying, then the same by region)
+
+
+## Describe key modes of travel by year (YM)
+
+
+## Describe key regions by year (YR)  
+
+
+## Describe differences in region*mode (YM, YR)
+
+
+## Visualise regions with the biggest mode change
+
+
+## Visualise regions with biggest changes in proportions (total pops, or proportion studying)
+
+
+#
+  
+## Statistical modelling - generalised linear models  
+
+The census is meant to count responses from every person in New Zealand on census night.  The primary dependent variable for our analysis is the value, or count of times a particular response was given.  The explanatory variables for the Travel to education analysis are 'Year' (Year of census), 'Region' (Geographic region), and 'Mode' (main means of travel to education).   
+This analysis includes the use of generalised linear modelling (GLM) to fit the data and identify key statistical relationships.  In general, the dependent variable is the observed value ('Value'), representing a count of positive responses in the explanatory variable (i.e. 'Variable', 'Year', and location (initially 'SA1')).  We will consider models with increasing complexity as follows:  
+
+  - the model that considers mutual independence between year, mode of travel, and region
+  - the model that considers joint independence 
+  - the model that considers conditional independence
+
+
+
+
+We will fit the census data against several models using Poisson LogLinear Generalised Linear Modelling.  The three models of interest will look for association between Year and Mode of transport (YM), Year and Region (YR), and 
+
+Since the census data is a collection of counts, we will use the Poisson Loglinear GLM.  
+
+  - totals by year, mode of travel, and region, without interaction.  The model is:
+
+$$\log \mu_{ijk} = \lambda + \lambda^X_i + \lambda^Y_j + \lambda^Z_k$$
+where:
+
+  - $i$ is the year of census response (2018, 2023) 
+  - $j$ represents the __mode of travel__: ( `r paste(cat(unique(teu$Variable), sep = "; "))` ) and 
+  - $k$ indicates the __region__: ( `r paste(cat(unique(teu$Regional.Council), sep = "; "))`  )
+
+
+
+
+
+  - totals by year, mode of travel, and region with two-factor interactions.  The model is:
+
+$$\log \mu_{ij} = \lambda + \lambda^X_i + \lambda^Y_j + \lambda^{XY}_{ij}$$
+
+  - totals by year, mode of travel, across regions
+
+$$\log \mu_{ijk} = \lambda + \lambda^X_i + \lambda^Y_j + \lambda^{XY}_{ij} 
++ \lambda^{XZ}_{ik} + \lambda^{YZ}_{jk} + \lambda^{XYZ}_{ijk}$$
+
+
+
+
+
+  - Visual analysis
+  - Statistical analysis
+  - Geographic analysis
+
+
+
+## Geographies  
+
+This exploratory analysis considers data at a national, regional and territorial level as defined by Statistics New Zealand (StatsNZ^[Stats NZ (2023). Statistical standard for geographic areas 2023 (updated December 2023). Retrieved from www.stats.govt.nz.]), using [geographic hierarchies](https://www.stats.govt.nz/assets/Methods/Statistical-standard-for-geographic-areas-2023/statistical-standard-for-geographic-areas-2023-updated-december-2023.pdf):  
+
+  - Statistical Area 1 (around 100-500 households, averaging around 200, e.g. a 'block' in urban areas)
+  - Statistical Area 2 (aims to reflect communities that interact socially and economically, e.g. may have a shared road network, shared community facilities, shared historical or social links etc. Analagous to a suburb (in urban areas))
+  - Statistical Area 3 (aggregation larger than SA2, but smaller than a territorial authority. Analagous to large suburb in urban areas, aggregation of smaller suburbs, mix of SA2 areas acros urban and rural)
+  - Territorial Authority
+  - Regional Authority
+  
+The StatsNZ website provides data at a range of aggregations and the census data used in this analysis is summarised at the level of Statistical Area 1.  Geographic aggregations (by Territorial or Regional Authority) comprise the Statistical Area 1 groups within each level.
+  
+  
+
+
+# Analysis  
+
+Fit multiple models based on the count of responses for different explanatory categories.  
+
+
+
+```{r ModelRegions}
+# fit a range of models to see how we go
+
+# run lots of models and store the results
+
+
+# dataset for model that summarises data at Regional level
+teu_reg <- teu %>%
+  group_by(Year, shortCode, Region, Variable) %>%
+  summarise(count = sum(Value))
+
+# (VR)
+fit_teu_reg_VR <- glm(count ~ Variable * Region,
+    data = teu_reg,
+    family = 'poisson')
+summary(fit_teu_reg_VR)
+1-pchisq(fit_teu_reg_VR$deviance, fit_teu_reg_VR$df.residual)
+# pval = 0
+
+# (YV, YR)
+fit_teu_reg_Yv_YR <- glm(count ~ Year * Variable + Year * Region,
+    data = teu_reg,
+    family = 'poisson')
+summary(fit_teu_reg_Yv_YR)
+1-pchisq(fit_teu_reg_YV_YR$deviance, fit_teu_reg_Yv_YR$df.residual)
+# pval = 0
+
+# saturated model
+fit_teu_reg_YVR <- glm(count ~ Year * Variable* Region,
+    data = teu_reg,
+    family = 'poisson')
+summary(fit_teu_reg_YVR)
+1-pchisq(fit_teu_reg_YVR$deviance, fit_teu_reg_YVR$df.residual)
+# pval = 0
+
+
+
+# # fit logistic model that considers interaction effect RV
+# fit_teu_YV_YR_RV <- glm(Value~factor(Year):Variable + factor(Year):Region + Region:Variable,
+#               data = teu,
+#               family = 'poisson')
+# summary(fit_teu_YV_YR_RV)
+# # check model fit
+# # H0: (YV, YR, RV) fits the data well, H1: not H0
+# # Test statistic is deviance
+# pval_YV_YR_RV <- 1-pchisq(fit_teu_YV_YR_RV$deviance, fit_teu_YV_YR_RV$df.residual)
+# # pval =0 < alpha=0.05 so reject null, model is not a good fit
+# 
+# 
+# # check the model with year and interaction by Region:Variable
+# teu_Y_RV <- glm(Value~factor(Year)+Region*Variable,
+#                 data = teu,
+#                 family = 'poisson')
+# summary(teu_Y_RV)
+# # check model fit
+# # H0: (Y, RV) fits the data well, H1: not H0
+# # Test statistic is deviance
+# pval_Y_RV <- 1-pchisq(teu_Y_RV$deviance, teu_Y_RV$df.residual)
+# # pval = 0
+# 
+# 
+# # fit logistic model that considers interaction effect YV for Auckland
+# teu_YV_ak <- glm(Value ~factor(Year)*Variable,
+#               data = teu[teu$Region=="Auckland",], 
+#               family = 'poisson')
+# summary(teu_YV_ak)
+# # check model fit
+# # H0: (Y, RV) fits the data well, H1: not H0
+# # Test statistic is deviance
+# pval_YV_ak <- 1-pchisq(teu_YV_ak$deviance, teu_YV_ak$df.residual)
+# # pval = 0, reject null, model does not fit the data
+# 
+# 
+# # fit logistic model that considers Passenger by Year and Region
+# teu_YR_pax <- glm(Value ~factor(Year)*Region,
+#                    data = teu[teu$Variable=="Passenger in a car, truck or van",],
+#                    family = 'poisson')
+# summary(teu_YR_pax)
+# 
+# 
+# # fit logistic model that considers passenger by Region
+# teu_R_pax <- glm(Value ~ Region,
+#                  data = teu[teu$Variable=="Passenger in a car, truck or van", ],
+#                  family = 'poisson')
+# summary(teu_R_pax)
+# 1-pchisq(teu_R_pax$deviance, teu_R_pax$df.residual)
+# # pval = 0, not a good fit
+# 
+# ### this model is way too big
+# # # fit a model that considers SA3 within a region (Auckland)
+# # teu_VSA3_R_ak <- glm(Value ~ Variable*SA3_chx,
+# #                     data = teu[teu$Region=="Auckland", ],
+# #                     family = 'poisson')
+# # summary(teu_VSA3_R_ak)
+# # 1-pchisq(teu_VSA3_R_ak$deviance, teu_VSA3_R_ak)
+# # # pval =  , 
+
+```
+
+
+
+Trying to fit the data to models is a bit... fraught.  Modelling for main effects of Year, Region, Variable at a national level result in models that don't fit the data.  Modelling for interaction effects between paris of Year, Region and Variable also result in models that fit the data poorly at the national level.  Modelling the interaction of Year and Region for a specific mode of travel ("passenger in a car, truck, or van") results in a model with poor fit...
+
+Try smaller models that look by territorial authority within region and then by SA2 (suburb) within SA3 
+
+```{r teuModelsByRegion}
+
+for (sa3 in unique(teu$SA3_chx[teu$Region=="Bay of Plenty"])){
+  fit_bop <- glm(Value ~ Year*TravelMode,
+                 data = teu[teu$SA3_chx==sa3,],
+                 family = 'poisson')
+  paste(cat("********** Summary for ", sa3, " ************"))
+  print(summary(fit_bop))
+  print(1-pchisq(fit_bop$deviance, fit_bop$df.residual))
+}
+```
+
+
+
+National level results for total proportions of travel to education by mode of travel, based on address of usual residence.
+
+```{r teuModeNational, include = TRUE, echo=FALSE, fig.show="hold", out.width="50%", fig.cap='Travel to education: summary plots'}
+# build a bunch of plots
+par(mfrow = c(2, 2))
+# plot total value by year
+p_teuY <- ggplot(data= teu, aes(x = as.factor(Year), y = Value)) +  
+  geom_col() +
+  labs(title = "Total counts for travel to education, 2018 and 2023")+
+  xlab("Census year")+
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE))
+#p_teuY
+
+# plot total value by Region
+p_teuR <- ggplot(teu, aes(x = Region, y = Value))+
+  geom_col()+
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
+  labs(title = "Total counts for travel to education by region")
+p_teuR
+
+# plot total by region and year
+p_teuRY <- ggplot(teu, aes(x = Region, y = Value, fill = as.factor(Year)))+
+  geom_col()+
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
+  labs(title = "Total counts for travel to education by region and year")
+p_teuRY
+
+# plot total value by mode of travel
+p_teuV <- ggplot(teu, aes(x = TravelMode, y = Value))+
+  geom_col()+
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
+  labs(title = "Total counts for travel to education by mode of travel")
+p_teuV
+
+# plot total value by mode of travel and year
+p_teuVY <- ggplot(teu, aes(x = TravelMode, y = Value, fill = as.factor(Year)))+
+  geom_col()+
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
+  labs(title = "Total counts for travel to education by mode of travel and year")
+p_teuVY
+
+par(mfrow = c(1, 1))
+```
+
+The regions that have the most travel to education are Auckland, Canterbury, Wellington, Waikato, and Bay of Plenty.  Each region show slight differences when broken down by census year 
+
+```{r plotModeOfTravelFacetRegions, include = TRUE, echo = FALSE, fig.show='hold', out.width="50%", fig.cap="Main means of travel across regions"}
+par(mfrow= c(1, 2))
+# plot the main means of travel, faceted across regions
+ggplot(data = teu, aes(x = TravelMode, y = Value, fill = TravelMode))+
+  geom_col()+
+  facet_wrap(facets=~Region, ncol = 4) +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_x_discrete(labels = NULL)+
+  labs(title= "Means of travel by region",
+       y = "Main means of travel")
+
+# plot the main means of travel across regions, suppress Auckland
+ggplot(data = teu[teu$Region!="Auckland",], aes(x = TravelMode, y = Value, fill = TravelMode))+
+  geom_col()+
+  facet_wrap(facets=~Region, ncol = 4) +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_x_discrete(labels = NULL)+
+  labs(title= "Means of travel by region: Auckland suppressed",
+       y = "Main means of travel")
+par(mfrow= c(1, 1))         
+```
+
+
+```{r regionFocussedPlots, include = TRUE, echo=FALSE, fig.show="hold", out.width="50%", fig.cap='Travel to education: region-focussed plots'}
+# develop plots that focus on regional effects, with particular focus on 
+# the top five, Auckland, Canterbury, Wellington, Waikato, Bay of Plenty
+# in each region, visualise the change over time for the region using facets
+
+target_regions <- c("Auckland", "Canterbury", "Wellington", "Waikato", "Bay of Plenty")
+
+plot_regions <- function(dat, region = NULL, variable = NULL, mode_of_travel= NULL, territory = NULL){
+  fig <- plot_ly(teu[dat$Region==region, ],
+                     x = ~Value[Year=="2018"], 
+                     y = ~TravelMode[Year=="2018"],
+                     name = "2018",
+                     type = 'bar',
+                 width = 1000,
+                 height = 1000)%>%
+  group_by(dat$Year[dat$Region==region]) %>%
+  add_trace(x = ~Value[Year=="2023"],
+            y = ~TravelMode[Year=="2023"],
+            name = "2023") %>%
+  layout(title = paste("Main means of travel by year: ", region),
+         xaxis = list(title = "Value"), 
+         yaxis = list(title = "Means of travel"))
+  
+  return(fig)
+}
+
+
+# generate plots for the areas with highest travel to education
+fig_ak <- plot_regions(teu, region = "Auckland")
+fig_cnt <- plot_regions(teu, region = "Canterbury")
+fig_wgn <- plot_regions(teu, region = "Wellington")
+fig_wkt <- plot_regions(teu, region = "Waikato")
+fig_bop <- plot_regions(teu, region = "Bay of Plenty")
+fig_mwt <- plot_regions(teu, region = "Manawatu-Whanganui")
+
+fig <- subplot(fig_ak, fig_cnt, fig_wgn, fig_wkt, fig_bop, fig_mwt, nrows = 3) %>%
+  layout()
+
+fig
+
+```
+
+Geographic plots
+
+```{r plotGeographicData, include = TRUE, echo = FALSE}
+# read in shapefiles
+m_sa1 <- st_read(shp_sa1) %>%
+  select(c(1,6)) %>%
+  rename(SA1=1)%>%
+  mutate(SA1=as.integer(SA1))
+# need to point ggplot to the [geometry] column, eg. stat_sf(mapping=aes(geometry =geometry))
+
+m_sa2 <- st_read(shp_sa2) %>%
+  select(c(1, 2, 6)) %>%
+  rename(SA2 = 1, SA2_chx = 2, SA2_geom = geometry) %>%
+  mutate(SA2 = as.integer(SA2)) 
+  
+m_ta <- st_read(shp_ta) %>%
+  select(c(1, 2, 6)) %>%
+  filter() %>%
+  rename(TA = 1, Territorial.Authority = 2) %>%
+  mutate(TA = as.integer(TA))
+
+
+m_rc <- st_read(shp_rc)
+
+
+
+# group the teu data by SA3 and variable
+teu_map <- left_join(teu, m_sa1, by = "SA1",
+                     relationship = 'many-to-one') %>%
+  group_by(Territorial.Authority, Variable)
+
+
+ggplot(data = teu_map) +
+  geom_sf(mapping = aes(geometry = geometry, fill = Variable))+
+  facet_wrap(~TravelMode)
+
+# plots by region
+ta_map <- left_join(census_TA, m_ta, by = "Territorial.Authority",
+                       relationship = 'many-to-one')
+
+ggplot(data = ta_map) +
+  geom_sf(mapping = aes(geometry = geometry))
+```
+
