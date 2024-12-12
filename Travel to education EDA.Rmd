@@ -7,13 +7,27 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE, warnings = FALSE}
-knitr::opts_chunk$set(include = FALSE, echo = FALSE)
-library(tidyr)
-library(dplyr)
+knitr::opts_chunk$set(include = FALSE, echo = FALSE, warnings = FALSE, message = FALSE)
+
+options(java.parameters = "-Xmx4G")
+
+
+library(data.table)
+# library(dplyr)
 library(ggplot2)
+library(leaflet)
+library(leaflet.providers)
+library(osmdata)
 library(plotly)
+library(rJava)
+library(r5r)
 library(sf)
+library(stars)
 library(sys)
+library(tidyverse)
+library(tidyr)
+library(viridisLite)
+
 # set theme for ggplot2
 ggplot2::theme_set(theme_classic())
 # turn off scientific notation
@@ -152,9 +166,6 @@ if (!file.exists(prev_written)) {
     mutate(shortCode = ifelse(substr(Var_Code, 1, 2) == "1y","1y",
       ifelse(substr(Var_Code, 1, 2) == "5y", "5y",
       sub("^(\\D+).*", "\\1", Var_Code)))
-      
-      
-      
       # substr(Var_Code, 1, 3) == "tee" ~ "tee",
       # substr(Var_Code, 1, 3) == "teu" ~ "teu",
       # substr(Var_Code, 1, 2) == "ib" ~ "ib",
@@ -185,25 +196,28 @@ if (!file.exists(prev_written)) {
   loadingTime
 }
   
-#  create object to hold the TS (total stated) values
-totals <- census %>% 
-  # filter in  the TS (Total Stated) rows
-  dplyr::filter(stringr::str_ends(Var_Code,"(?i)TS")) 
 
 
-# create a TS (total stated) column to hold the TS for each SA1, year, and topic
-census <- census %>% 
-  # filter in  the Total and Total Stated rows
-  dplyr::filter(!stringr::str_detect(Var_Code,"(?i)TS|Total|Med")) %>%
-  
-  # join census and totals table 
-  left_join(y = totals[,c("SA1", "shortCode", "Year", "Value")],
-            by = c("SA1", "Year", "shortCode"),
-            relationship = 'many-to-one'
-            ) %>%
-  
-  # rename to useful column names
-  rename(c(Value = "Value.x", TS = "Value.y"))
+
+# #  create object to hold the TS (total stated) values
+# totals <- census %>% 
+#   # filter in  the TS (Total Stated) rows
+#   dplyr::filter(stringr::str_ends(Var_Code,"(?i)TS")) 
+# 
+# 
+# # create a TS (total stated) column to hold the TS for each SA1, year, and topic
+# census <- census %>% 
+#   # filter in  the Total and Total Stated rows
+#   dplyr::filter(!stringr::str_detect(Var_Code,"(?i)TS|Total|Med")) %>%
+#   
+#   # join census and totals table 
+#   left_join(y = totals[,c("SA1", "shortCode", "Year", "Value")],
+#             by = c("SA1", "Year", "shortCode"),
+#             relationship = 'many-to-one'
+#             ) %>%
+#   
+#   # rename to useful column names
+#   rename(c(Value = "Value.x", TS = "Value.y"))
 ```
 
 
@@ -229,21 +243,25 @@ census <- census %>%
 #   summarise(count = sum(Value)) 
 ```
 
-```{r readInShapeFiles}
+```{r readInShapeFilePaths}
 if (!exists('shp_sa1')){
   # shapefiles are available from StatsNZ Geographic Data Service at: 
   # https://datafinder.stats.govt.nz/ 
   shp_folder <-  c("C:/Users/chad/OneDrive - Victoria University of Wellington - STUDENT/DATA581 - waka kotahi/StatsNZShapeFiles/")
   shp_sa1 <- paste0(shp_folder, "statistical-area-1-2023-generalised.shp", sep = "")
   shp_sa2 <- paste0(shp_folder, "statistical-area-2-2023-generalised.shp", sep = "")
+  shp_sa3 <- paste0(shp_folder, "statistical-area-3-2023-clipped-generalised.shp", sep = "")
   shp_ta <- paste0(shp_folder, "territorial-authority-2023-clipped-generalised.shp", sep = "")
   shp_rc <- paste0(shp_folder, "regional-council-2023-clipped-generalised.shp", sep = "")
+  shp_ur <- paste0(shp_folder, "urban-rural-2023-generalised.shp", sep = "")
 }
 ```
 
 ```{r travelToEducationByUsuallyResident}
 # object to hold the travel to education data without totals
 teu <- census %>% 
+  # filter out the Total and Total Stated rows
+  dplyr::filter(!stringr::str_detect(Var_Code,"(?i)TS|Total|Med"))%>%
   dplyr::filter(stringr::str_starts(Var_Code , 
                                     "(?i)teu")) 
 
@@ -268,12 +286,58 @@ teu <- teu %>%
 
 rm(list = c("teuMode", "mode_labeller", "teuRegion", "region_labeller", "Region"))
 
+```
 
-# summarise data at regional level
-census_TA <- census %>%
-  group_by(Variable, Territorial.Authority)%>%
-  summarise(total = sum(Value))
-  
+
+
+
+
+```{r summarisedDatasets}
+#### just do this as you need the dataset, then remove after it's been used
+# # summarise data at Territorial level
+# census_ta <- census %>%
+#   group_by(Year, Regional.Council, Territorial.Authority, shortCode, Variable)%>%
+#   summarise(total = sum(Value))
+# #census_ta[15000:15005,]
+# 
+# # summarise data at Regional level
+# census_rc <- census %>%
+#   group_by(Year, Regional.Council, shortCode, Variable)%>%
+#   summarise(total = sum(Value))
+# #census_rc[3000:3005, ]
+# 
+# summary(glm(total~factor(Year)+Variable,
+#     data = census_rc[census_rc$shortCode=="pq",],
+#     family = 'poisson'))
+# 
+# # summarise data at SA3
+# census_sa3 <- census %>%
+#   group_by(Regional.Council, Territorial.Authority, SA3_chx, shortCode, Variable)%>%
+#   summarise(total = sum(Value))
+# 
+# # summarise data at SA2
+# census_sa2 <- census %>%
+#   group_by(Regional.Council, Territorial.Authority, SA2_chx,  shortCode, Variable)%>%
+#   summarise(total = sum(Value))  
+```
+
+
+```{r widenedDatasets}
+### just do this as required and then remove after used.
+
+# # try making a wide table
+# census_wide <- census %>%
+#   pivot_wider(id_cols = c(SA1, SA2, SA2_chx, SA3, SA3_chx, Regional.Council,
+#                           Territorial.Authority, shortCode),
+#               names_from = Variable,
+#               values_from = Value
+#               )
+# 
+# names(census_wide)
+# # census_wide[3,]
+# 
+# # produces a table that has a column for each possible variable (e.g. 'travel by bicycle', '$10,000-21,000' etc.)
+
 ```
 
 # Methodology  
@@ -397,29 +461,31 @@ The census data comprises count data that is collected from areas that are consi
 
 
 have similar sized populations
-This analysis fits four models using the Poisson Regression Generalised Linear Model.  
 
 
 ## Describe regional proportions (totals by year, then proportion that are studying, then the same by region)
 
+Because the census data is a snapshot of the national picture, analysis by region allows for a more granular appreciation of the data.  The data is naturally grouped by StatsNZ geographic groupings (from highest to lowest aggregations) by Regional Council, then Territorial Authority, Statistical Area 3, Statistical Area 2, and Statistical Area 1.  Initial analysis is conducted by 17 regions (including Area outside of region), with more granular analysis conducted based on subsequent 'natural' groupings, as identified during the analysis (e.g. regions with highest totals etc.)
 
 ## Describe key modes of travel by year (YM)
 
+The census data provides responses for 2018 and 2023 so some analysis is conducted to determine any differences between years.  Travel differences between years is initially conducted at the national level and subsequently at geographical groupings and for different modes of travel. 
 
 ## Describe key regions by year (YR)  
 
+StatsNZ divides the country into 17 regions, each of which are aggregations of smaller geographies.  Data will be analysed by region, noting changes between census year.  This analysis ignores consideration of modes of transport and focuses only on comparing total responses between years, across regions.
 
 ## Describe differences in region*mode (YM, YR)
 
+In describing differences in Region and Mode, the analysis considers both the individual effect of region and mode of travel, as well as the interaction of those two variables.  
 
 ## Visualise regions with the biggest mode change
 
+While statistical modelling may be helpful, many of the relationships described thus far will be presented as simple bar or column plots.  Similar analysis is conducted for regions with the biggest changes in either mode of travel or total proportions.
 
-## Visualise regions with biggest changes in proportions (total pops, or proportion studying)
 
 
-#
-  
+
 ## Statistical modelling - generalised linear models  
 
 The census is meant to count responses from every person in New Zealand on census night.  The primary dependent variable for our analysis is the value, or count of times a particular response was given.  The explanatory variables for the Travel to education analysis are 'Year' (Year of census), 'Region' (Geographic region), and 'Mode' (main means of travel to education).   
@@ -430,7 +496,7 @@ This analysis includes the use of generalised linear modelling (GLM) to fit the 
   - the model that considers conditional independence
 
 
-
+__SORT THE MODELS FIRST - RESTRUCTURE THE DATA__
 
 We will fit the census data against several models using Poisson LogLinear Generalised Linear Modelling.  The three models of interest will look for association between Year and Mode of transport (YM), Year and Region (YR), and 
 
@@ -485,44 +551,102 @@ The StatsNZ website provides data at a range of aggregations and the census data
 
 # Analysis  
 
-Fit multiple models based on the count of responses for different explanatory categories.  
+## Statistical modelling
 
 
+Fit multiple models based on the count of responses for different explanatory categories. 
 
-```{r ModelRegions}
+```{r fn_glm_by_region}
 # fit a range of models to see how we go
 
 # run lots of models and store the results
+# use a function and a for-loop:
+# from census or teu table; for each unique Region; do fit a glm model from the filtered dataset
+# store the model ID, reference, summary results (coefficients, deviance, GoF)
+
+# function to run glm within a geographic region and collect results
+glm_by_region <- function(data, region = NULL){
+  territories <-unique(data$Territorial.Authority[data$Regional.Council == region])
+  
+  output <- list(region=region,
+                 territory = list())
+  print(output)
+  for (i in 1:length(territories)){
+    
+    # skip Territorial authorities with only one SA3
+    if (length(unique(data$SA3_chx[data$Territorial.Authority==territories[i]])) >1){
+      
+      df <- data[data$Territorial.Authority==territories[i], ]
+     
+      fit <- glm(Value~Variable*SA3_chx,
+                 data = df,
+                 family = 'poisson')
+      
+      t_name = territories[i]
+      out <- list(loc = list(
+        id = territories[i],
+                  results = list(
+                  coeffs = fit$coefficients,
+                  deviance = fit$deviance,
+                  Gof_pval = 1-pchisq(fit$deviance, fit$df.residual))))
+      
+      output$territory <- append(output$territory, out)
+    }
+  }
+  return(output)
+}
 
 
+```
+
+
+```{r ModelRegions}
+# to access data for third terriotry: result$territory[[3]]$results
+# testing <- glm_by_region(teu, region = "Bay of Plenty Region")
+
+
+
+# consider not creating new objects, just filter existing
 # dataset for model that summarises data at Regional level
-teu_reg <- teu %>%
-  group_by(Year, shortCode, Region, Variable) %>%
-  summarise(count = sum(Value))
+# teu_reg <- teu %>%
+#   group_by(Year, shortCode, Region, Variable) %>%
+#   summarise(count = sum(Value))
 
-# (VR)
-fit_teu_reg_VR <- glm(count ~ Variable * Region,
-    data = teu_reg,
-    family = 'poisson')
-summary(fit_teu_reg_VR)
-1-pchisq(fit_teu_reg_VR$deviance, fit_teu_reg_VR$df.residual)
-# pval = 0
 
-# (YV, YR)
-fit_teu_reg_Yv_YR <- glm(count ~ Year * Variable + Year * Region,
-    data = teu_reg,
-    family = 'poisson')
-summary(fit_teu_reg_Yv_YR)
-1-pchisq(fit_teu_reg_YV_YR$deviance, fit_teu_reg_Yv_YR$df.residual)
-# pval = 0
 
-# saturated model
-fit_teu_reg_YVR <- glm(count ~ Year * Variable* Region,
-    data = teu_reg,
-    family = 'poisson')
-summary(fit_teu_reg_YVR)
-1-pchisq(fit_teu_reg_YVR$deviance, fit_teu_reg_YVR$df.residual)
-# pval = 0
+
+# fit models as required
+# # model with count~Region
+# teu_R <- glm(count~Region,
+#                       data = teu_reg,
+#                       family = 'poisson')
+# summary(teu_R)
+# exp(coef(teu_R))
+# 1-pchisq(teu_R$deviance, teu_R$df.residual)
+# 
+# # (VR)# teu_reg_VarAsY(VR)
+# fit_teu_reg_VR <- glm(count ~ Variable * Region,
+#     data = teu_reg,
+#     family = 'poisson')
+# summary(fit_teu_reg_VR)
+# 1-pchisq(fit_teu_reg_VR$deviance, fit_teu_reg_VR$df.residual)
+# # pval = 0
+# 
+# # (YV, YR)
+# fit_teu_reg_Yv_YR <- glm(count ~ Year * Variable + Year * Region,
+#     data = teu_reg,
+#     family = 'poisson')
+# summary(fit_teu_reg_Yv_YR)
+# 1-pchisq(fit_teu_reg_YV_YR$deviance, fit_teu_reg_Yv_YR$df.residual)
+# # pval = 0
+# 
+# # saturated model
+# fit_teu_reg_YVR <- glm(count ~ Year * Variable* Region,
+#     data = teu_reg,
+#     family = 'poisson')
+# summary(fit_teu_reg_YVR)
+# 1-pchisq(fit_teu_reg_YVR$deviance, fit_teu_reg_YVR$df.residual)
+# # pval = 0
 
 
 
@@ -595,175 +719,716 @@ Trying to fit the data to models is a bit... fraught.  Modelling for main effect
 Try smaller models that look by territorial authority within region and then by SA2 (suburb) within SA3 
 
 ```{r teuModelsByRegion}
-
-for (sa3 in unique(teu$SA3_chx[teu$Region=="Bay of Plenty"])){
-  fit_bop <- glm(Value ~ Year*TravelMode,
-                 data = teu[teu$SA3_chx==sa3,],
-                 family = 'poisson')
-  paste(cat("********** Summary for ", sa3, " ************"))
-  print(summary(fit_bop))
-  print(1-pchisq(fit_bop$deviance, fit_bop$df.residual))
-}
+# # fit a bunch of models as part of a for loop
+# for (sa3 in unique(teu$SA3_chx[teu$Region=="Bay of Plenty"])){
+#   fit_bop <- glm(Value ~ Year*TravelMode,
+#                  data = teu[teu$SA3_chx==sa3,],
+#                  family = 'poisson')
+#   paste(cat("********** Summary for ", sa3, " ************"))
+#   print(summary(fit_bop))
+#   print(1-pchisq(fit_bop$deviance, fit_bop$df.residual))
+# }
 ```
 
 
 
 National level results for total proportions of travel to education by mode of travel, based on address of usual residence.
 
-```{r teuModeNational, include = TRUE, echo=FALSE, fig.show="hold", out.width="50%", fig.cap='Travel to education: summary plots'}
-# build a bunch of plots
-par(mfrow = c(2, 2))
-# plot total value by year
-p_teuY <- ggplot(data= teu, aes(x = as.factor(Year), y = Value)) +  
+Create a function to break down each regional council into territorial authorities
+Then territorial authorities into SA3
+then SA3 into SA2
+
+look at variables like:  
+
+  - income bracket (ib)
+  - number of cars 
+  - 
+
+
+
+## Analysing data using plots
+
+### National level analysis - Totals by year, region, and mode of travel  
+
+Visual analysis of data begins at highest level, with totals by year, region, and mode of travel.
+
+```{r fnBaseAndYearPlots}
+
+# create function to generate base and year level breakdowns of means of travel,
+# combining multiple regions
+base_year_plots <- function(df_base, df_year, reg){
+
+  # base level plot for no year breakdown
+  baseplot <- ggplot(df_base %>% filter(Regional.Council %in% reg),
+                  aes(x = TravelMode))+
+    scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+    coord_flip()
+  
+  # base level plot for all regions
+  yearplot <- ggplot(df_year %>% filter(Regional.Council %in% reg),
+                  aes(x = TravelMode, y = Value, fill = factor(Year)), 
+                  group = Region)+
+    scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) 
+  
+  # plot  
+  bp <- baseplot + geom_col(aes(y = Value))+
+    labs(title = "Total counts for travel to education by mode of travel") 
+  
+  yp <-yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+ 
+    labs(title = "Total counts for travel to education by mode of travel and year")+
+    coord_flip()  
+  
+  return(list(bp = bp, yp = yp))
+  
+}
+
+```
+
+```{r subsetTEUbyYear}
+#structure data for plotting by year
+teu_year <- teu %>%
+  group_by(TravelMode, Year, Regional.Council) %>%
+  summarise(Value = sum(Value))
+```
+
+
+```{r teuModeNational, include = TRUE, echo=FALSE, message = FALSE, fig.show="hold", out.width="50%", fig.cap='Travel to education: summary plots'}
+# plot 3 levels of analysis across 2 columns
+par(mfrow = c(3, 2))
+
+# all regions
+regAll <- unique(teu$Regional.Council)
+
+
+
+# base level plot for no year breakdown
+baseplot <- ggplot(teu)+
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  coord_flip()
+
+# base level plot for selected regions
+yearplot <- ggplot(teu_year, aes(y = Value), group = factor(Year))+
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE))+
+  coord_flip()
+
+
+### totals for all regions
+# plot totals by year
+ggplot(data= teu, aes(x = factor(Year), y = Value)) +  
   geom_col() +
   labs(title = "Total counts for travel to education, 2018 and 2023")+
   xlab("Census year")+
   scale_y_continuous(labels = function(x) format(x, scientific = FALSE))
-#p_teuY
 
-# plot total value by Region
-p_teuR <- ggplot(teu, aes(x = Region, y = Value))+
+# plot totals by year and mode
+ggplot(teu, aes(x = factor(Year), y = Value, fill = TravelMode))+
   geom_col()+
   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
   scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
+  labs(title = "Total counts for travel to education by year and travel mode")
+
+
+# plot totals by region
+baseplot +
+  geom_col(aes(x = Regional.Council, y = Value)) +
+  labs(title = "Total counts for travel to education, 2018 and 2023")
+yearplot +
+  geom_bar(aes(x = Regional.Council, fill = factor(Year)), 
+           position = 'dodge',
+           stat = 'summary',
+           fun = sum)+
   labs(title = "Total counts for travel to education by region")
-p_teuR
 
-# plot total by region and year
-p_teuRY <- ggplot(teu, aes(x = Region, y = Value, fill = as.factor(Year)))+
-  geom_col()+
-  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
-  scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
-  labs(title = "Total counts for travel to education by region and year")
-p_teuRY
 
-# plot total value by mode of travel
-p_teuV <- ggplot(teu, aes(x = TravelMode, y = Value))+
-  geom_col()+
-  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
-  scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
-  labs(title = "Total counts for travel to education by mode of travel")
-p_teuV
+# plot of modes for all regions
+allRegions <-base_year_plots(teu, teu_year, regAll)
+allRegions$bp
+allRegions$yp
+rm(allRegions)
 
-# plot total value by mode of travel and year
-p_teuVY <- ggplot(teu, aes(x = TravelMode, y = Value, fill = as.factor(Year)))+
-  geom_col()+
-  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
-  scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
-  labs(title = "Total counts for travel to education by mode of travel and year")
-p_teuVY
+# # plot totals by travel mode
+# baseplot +
+#   geom_col(aes(x = TravelMode, y = Value, fill = factor(Year))) +
+#   labs(title = "Total counts for travel to education by mode of travel")
+# 
+# yearplot +
+#   geom_col(aes(x = TravelMode, y = Value, fill = factor(Year)),
+#            position = 'dodge') +
+#   labs(title = "Total counts for travel to education by mode of travel and year")
 
+# return to 1x1
 par(mfrow = c(1, 1))
 ```
 
-The regions that have the most travel to education are Auckland, Canterbury, Wellington, Waikato, and Bay of Plenty.  Each region show slight differences when broken down by census year 
+Total counts for the travel to education segment are higher in 2023 than 2018, with 'passenger in car, truck, van' as the most reported mode of travel, followed by 'walk or jog', 'drive car, truck, van', 'school bus',  and 'studying at home'.  In comparing regions, 'Auckland' has, by far the highest reports of travel to education over across both census years, followed by 'Canterbury', 'Wellington', then 'Bay of Plenty'.
+
+There are four natural groupings based on similar totals:  
+
+  - Auckland
+  - Canterbury, Wellington, Waikato
+  - Bay of Plenty, Otago, Manawatu-Whanganui, Hawke's Bay, Northland
+  - Taranaki, Southland, Gisborne, Marlborough, Nelson, Tasman, West Coast
+
+The Auckland region has only one division by Territorial Authority ("Auckland"), which has nearly 200 areas at Statistical Area 3.  
+
+### Regional level analysis:  Auckland  
+
+[THIS SECTION WILL BE MASSIVE, NEEDS TO BE REDUCED INTO GROUPINGS]
+
+```{r Auckland, include = TRUE, echo = FALSE, fig.show='hold', out.width="50%", fig.cap = 'Combined main means of travel to education for Auckland'}
+# plots to compare totals within regions, then compare modes by region and year
+par(mfrow=c(1,2))
+
+# set regional filter to 'Auckland
+reg1 <- "Auckland Region"
+akld <- base_year_plots(teu, teu_year, reg1)
+akld$bp
+akld$yp
+rm(akld)
+
+par(mfrow=c(1,1))
+```
+
+
+```{r nextRegions, include = TRUE, echo = FALSE, fig.show='hold', out.width="50%", fig.cap = 'Combined main means of travel to education for Auckland'}
+# 
+# # regions in region 2
+# reg <- c('Auckland')
+# 
+# # base level plot for no year breakdown
+# baseplot <- ggplot(teu %>% filter(Region %in% reg),
+#                 aes(x = TravelMode))+
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+#   coord_flip()
+# 
+# # base level plot for all regions
+# yearplot <- ggplot(teu_year %>% filter(Region %in% reg),
+#                 aes(x = TravelMode, y = Value, fill = factor(Year)), 
+#                 group = Region)+
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) 
+# 
+# 
+# # plot  
+# baseplot + geom_col(aes(y = Value))+
+#   labs(title = "Total counts for travel to education by mode of travel") 
+# 
+# yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+ 
+#   labs(title = "Total counts for travel to education by mode of travel and year")+
+#   coord_flip()
+
+
+```
+
+For all three regions (Canterbury, Wellington, and Waikato), the main means of travel to education is as a 'passenger in a car, van, or truck', followed by 'Walk or jog', 'drive a car, van, or truck', 'school bus', 'public bus', 'studying from home' and then 'bicycle'.  A small proportion travel by 'train', or 'other'.  When broken down by census year and going from 2018 to 2023, there were increases in travelling as a passenger, studying from home, driving, using a bicycle, and using a public bus.  Over the same time period, these three regions had overall decreases in walking, and small decreases in using school bus or train to get to education. 
+
+```{r fn_by_facet}
+# create a function to generate modes of travel plots wrapped by region
+by_facet <- function(df_year, reg, nr=1, nc=1){
+  
+  # year level level plot for all regions
+  yearplot <- ggplot(df_year %>% filter(Regional.Council %in% reg),
+                  aes(x = TravelMode, y = Value, fill = factor(Year)), 
+                  group = Regional.Council)+
+    scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) 
+  
+  yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+
+  labs(title = "Total counts for travel to education by mode of travel and year") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 3))+
+  facet_wrap(~Regional.Council, nrow = nr, ncol = nc)
+}
+```
+
+
+```{r facet_Auckland, include = TRUE, echo = FALSE, fig.cap = 'Main means of travel to education for Auckland'}
+by_facet(teu_year, reg1)
+# # facet wrap by region
+# yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+
+#   labs(title = "Total counts for travel to education by mode of travel and year") +
+#   scale_x_discrete(guide = guide_axis(n.dodge = 3))+
+#   facet_wrap(~Region, nrow = length(reg))
+```
+
+
+### Regional level analysis:  Canterbury, Wellington, Waikato  
+
+Initial analysis comparing relative modes of transport between regions Canterbury, Wellington, and Waikato using high-level summary plots.
+
+```{r CanterburyWellingtonWaikato, include = TRUE, echo = FALSE, fig.show='hold', out.width="50%", fig.cap = 'Combined main means of travel to education for Canterbury, Wellington and Waikato'}
+# plots to compare totals within regions, then compare modes by region and year
+par(mfrow=c(1,2))
+
+# regions in region 2
+reg2 <- c("Canterbury Region", "Wellington Region", "Waikato Region")
+cww <- base_year_plots(teu, teu_year, reg2)
+
+cww$bp
+cww$yp
+rm(cww)
+
+# # base level plot for no year breakdown
+# baseplot <- ggplot(teu %>% filter(Region %in% reg),
+#                 aes(x = TravelMode))+
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+#   coord_flip()
+# 
+# # base level plot for all regions
+# yearplot <- ggplot(teu_year %>% filter(Region %in% reg),
+#                 aes(x = TravelMode, y = Value, fill = factor(Year)), 
+#                 group = Region)+
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) 
+# 
+# 
+# # plot  
+# baseplot + geom_col(aes(y = Value))+
+#   labs(title = "Total counts for travel to education by mode of travel") 
+# 
+# yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+ 
+#   labs(title = "Total counts for travel to education by mode of travel and year")+
+#   coord_flip()
+
+par(mfrow=c(1,1))
+```
+
+For all three regions (Canterbury, Wellington, and Waikato), the main means of travel to education is as a 'passenger in a car, van, or truck', followed by 'Walk or jog', 'drive a car, van, or truck', 'school bus', 'public bus', 'studying from home' and then 'bicycle'.  A small proportion travel by 'train', or 'other'.  When broken down by census year and going from 2018 to 2023, there were increases in travelling as a passenger, studying from home, driving, using a bicycle, and using a public bus.  Over the same time period, these three regions had overall decreases in walking, and small decreases in using school bus or train to get to education. 
+
+```{r facetCanterburyWellingtonWaikato, include = TRUE, echo = FALSE, fig.cap = 'Main means of travel to education for Canterbury, Wellington and Waikato'}
+# facet wrap by region
+by_facet(teu_year, reg2, nr = 3, nc = 1)
+
+# yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+
+#   labs(title = "Total counts for travel to education by mode of travel and year") +
+#   scale_x_discrete(guide = guide_axis(n.dodge = 3))+
+#   facet_wrap(~Region, nrow = length(reg))
+```
+
+Comparing between regions Canterbury and Waikato saw an increase in travelling to education as a passenger, with Wellington fairly stable on the same mode.  All three regions saw an increase in study at home, with decreases in walking for Wellington and Waikato.  Canterbury reported more travel by bicycle than both waikato and Wellington.  In each region, passenger was the most common means of travel to education, followed by walking, then driving in Canterbury and Waikato.  Wellington's third highest mode was public bus, followed by an even standing between school bus and driving. Travelling on a school bus was within the top four modes for all three regions.
+
+### Regional level analysis:  Bay of Plenty, Otago, Manawatu-Whanganui, Hawke's Bay, Northland  
+
+Initial analysis comparing relative modes of transport between regions Bay of Plenty, Otago, Manawatu-Whanganui, Hawke's Bay and Northland, using high-level summary plots.
+
+```{r BOPOtagoManawatuHawkewBayNorthland, include = TRUE, echo = FALSE, fig.show='hold', out.width="50%", fig.cap = "Combined main means of travel to education for Bay of Plenty, Otago, Manawatu-Whanganui, Hawke's Bay, and Northland"}
+# plots to compare totals within regions, then compare modes by region and year
+par(mfrow=c(1,2))
+
+# regions in region 2
+reg3 <- c("Bay of Plenty Region", "Otago Region", "Manawatu-Whanganui Region", "Hawke's Bay Region", "Northland Region")
+
+bmhn <- base_year_plots(teu, teu_year, reg3)
+bmhn$bp
+bmhn$yp
+rm(bmhn)
+
+# # base level plot for no year breakdown
+# baseplot <- ggplot(teu %>% filter(Region %in% reg),
+#                 aes(x = TravelMode))+
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+#   coord_flip()
+# 
+# # base level plot for all regions
+# yearplot <- ggplot(teu_year %>% filter(Region %in% reg),
+#                 aes(x = TravelMode, y = Value, fill = factor(Year)), group = Region)+
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) 
+# 
+# 
+# # compare base to breakdown by year 
+# baseplot + geom_col(aes(y = Value))+
+#   labs(title = "Total counts for travel to education by mode of travel")
+# 
+# yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum) +
+#   labs(title = "Total counts for travel to education by mode of travel and year") +
+#   coord_flip()
+
+par(mfrow=c(1,1))
+```
+
+Combined results for both census years and all seven regions in this group show the predominant means of travel to education is 'passenger in car, truck or van', followed by 'walk or jog', then 'school bus', 'drive a car, truck or van', 'study at home', 'bicycle', 'public bus', 'other'.  Comparing results between the 2018 and 2023, saw an increase in 'passenger', 'study at home', and a slight increase in travel by 'school bus'.  Decreasing means of travel for this regional group were 'walk or jog', with smaller decreases for 'drive a car, truck or van', 'bicycle', and 'other'.
+
+```{r facetBOPOtagoManawatuHawkesBayNorthland, include = TRUE, echo = FALSE, out.width = "100%", fig.cap="Main means of travel by region: Bay of Plenty, Otago, Manawatu-Whanganui, Hawke's Bay, Northland"}
+# facet wrap by region
+by_facet(teu_year, reg3, nr=3, nc=2)
+
+# yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+
+#   labs(title = "Total counts for travel to education by mode of travel and year") +
+#   facet_wrap(~Region, nrow = 3, ncol = 2) + 
+#   scale_x_discrete(guide = guide_axis(n.dodge = 3))+ 
+#   theme(legend.position = 'inside', legend.position.inside = c(0.8, 0.05))
+```
+
+Comparing across all regions, 'passenger in a car, truck or van' is the predominant means of travel to education.  'Walk or jog' occurs at a similar level in Otago, is the second highest in Manawatu-Whanganui, and is with the top three means of travel for all regions.  In both Bay of Plenty and Northland, the second highest means of transport is 'school bus'.  For all regions, 'drive a car, truck or van' is more commonly the main means of travel, with similar counts as the 2023 'study at home' category, which itself increased across all regions in this group between 2018 and 2023.
+
+
+### Regional level analysis:  Taranaki, Southland, Gisborne, Marlborough, Nelson, Tasman, West Coast  
+
+Initial analysis comparing relative modes of transport between regions Taranaki, Southland, Gisborne, Marlborough, Nelson, Tasman, and West Coast.
+
+```{r TaranakiSthlndGisbMarlNelsTasmWestC, include = TRUE, echo = FALSE, fig.show='hold', out.width="50%", fig.cap = "Combined main means of travel to education for Taranaki, Southland, Gisborne, Marlborough, Nelson, Tasman, and West Coast"}
+# plots to compare totals within regions, then compare modes by region and year
+par(mfrow=c(1,2))
+
+# regions in region 2
+reg4 <- c("Taranaki Region", "Southland Region", "Gisborne Region", 
+          "Marlborough Region", "Nelson Region", "Tasman Region", "West Coast Region" )
+
+rest <- base_year_plots(teu, teu_year, reg4)
+rest$bp
+rest$yp
+rm(rest)
+
+
+# # base level plot for no year breakdown
+# baseplot <- ggplot(teu %>% filter(Region %in% reg),
+#                 aes(x = TravelMode))+
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+#   coord_flip()
+# 
+# # base level plot for all regions
+# yearplot <- ggplot(teu_year %>% filter(Region %in% reg),
+#                 aes(x = TravelMode, y = Value, fill = factor(Year)), group = Region)+
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) 
+# 
+#   
+# baseplot + geom_col(aes(y = Value))+
+#   labs(title = "Total counts for travel to education by mode of travel")
+# 
+# yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+
+#   labs(title = "Total counts for travel to education by mode of travel and year") +
+#   coord_flip()
+
+par(mfrow=c(1,1))
+```
+
+Combined totals for the regions Taranaki, Southland, Gisborne, Marlborough, Nelson, Tasman and West Coast show the main means of travel to education as 'passenger in car, truck or van', followed by 'walk or jog', 'school bus', 'drive car, truck or van', 'study at home', 'bicycle', 'public bus', and 'other'.  There is a very small proportion of response that travel to education by 'train' and by 'ferry'.  Comparing differences between census years 2018 and 2023 across all regions in this group shows increases in 'passenger' and 'study at home', and a decrease in 'walk or jog' for the later census.  Other means of travel are stable between census years.
+
+```{r facetTaranakiSthlndGisbMarlNelsTasmWestC, include = TRUE, echo = FALSE, out.width = "100%", fig.cap="Main means of travel by region: Taranaki, Southland, Gisborne, Marlborough, Nelson, Tasman, and West Coast"}
+# facet wrap by region
+
+by_facet(teu_year, reg4, nr = 4, nc = 2)
+# yearplot + geom_bar(position = 'dodge', stat = 'summary', fun =sum)+
+#   labs(title = "Total counts for travel to education by mode of travel and year") +
+#   facet_wrap(~Region, nrow = 4, ncol = 2) + 
+#   scale_x_discrete(guide = guide_axis(n.dodge = 3))+ 
+#   theme(legend.position = 'inside', legend.position.inside = c(0.8, 0.1))
+```
+Comparing modes of travel between the regions in this group shows that the main means of travel to education is 'passenger in car, truck or van', with highest totals in Taranaki, then Southland and Gisborne.  Nelson, Marlborough, and Tasman have similar counts of 'passenger', with the lowest counts overall for West Coast.  Taranaki, Southland, and Gisborne's top three means of travel are 'passenger', 'walk', and 'school bus'.  Between 2018 and 2023, all regions except Nelson saw an increase in counts for 'passenger'.  
+
+### Summary of high-level plots  
+
+  - The most common main means of travel to education across all regions and both years is 'passenger in car, truck or van' with increases from 2018 to 2023 for all regions except Nelson
+  - The second most common main means of travel is either 'walk or jog' (Canterbury, Wellington, Waikato, Otago, Manawatu-Whanganui, Hawke's Bay, Taranaki, Nelson, and Marlborough), or 'school bus' (Gisborne, West Coast, Tasman, Southland, Northland)
+  - 
+
+## Plotting data by geographies
+
+### Regional groupings:  Auckland
+
+
+
+
+### Regional groupings:  Canterbury, Waikato, and Wellington
+
+Overlay count data on to geographies for Canterbury, Waikato, and Wellington.
+
+```{r regionalShapefiles, }
+# read in the regional shape file and filter to just the identifiers and geometry
+# read once, keep it out of the function
+r_shp <- st_read(shp_rc, quiet = TRUE)%>% 
+  select(c(1, 2, geometry)) %>%
+  rename(RC = 1,
+         Regional.Council = 2)
+# get regional bounding boxes
+# eg.   rbb <- getbb("Auckland Region) --> returns min/max x= long, y = lat
+
+# select regions into target groups, although this may be a bad idea when they are distal
+# can use existing reg1, reg2, reg3, reg4 for groupings
+
+# rc1 <- "Auckland Region"
+# rc2 <- c("Canterbury Region", "Wellington Region", "Waikato Region")
+# rc3 <- c("Bay of Plenty Region", "Otago Region", "Manawatu-Whanganui Region",
+#          "Hawke's Bay Region", "Northland Region")
+# rc4 <- c("Taranaki Region", "Southland Region", "Gisborne Region",
+#          "Marlborough Region", "Nelson Region", "Tasman Region",
+#          "West Coast Region")
+```
+
+
+```{r fnSaInBigger, include = TRUE, fig.cap="Testing the function's output"}
+######## function ##############
+# small shapes in bigger ones
+sa_in_bigger <- function(df, reg){
+  
+  # read in the sa3 shape file and filter to just the identifiers and geometry
+  shapefiles <- st_read(shp_sa3, quiet = TRUE) %>%
+    select( c(1, 2, geometry)) %>%
+    rename(SA3 = 1,
+           SA3_chx = 2) %>%
+    filter(SA3_chx %in% unique(df$SA3_chx[df$Regional.Council %in% reg]))
+  
+  # summarise data to sa3, retain year, region, sa3, and mode of travel
+  sa3_df <- df %>% 
+    filter(Regional.Council %in% reg) %>%
+    group_by(Year, Regional.Council, SA3_chx, TravelMode, Value) %>%
+    summarise(Value = sum(Value))
+  
+  # this creates a plot of the whole country with region shapes
+  plt <- ggplot(data = sa3_df %>% 
+           filter(Regional.Council %in% reg) %>% 
+           group_by(Year, Regional.Council, TravelMode) %>% 
+           summarise(total = sum(Value)),
+         )+
+    geom_sf(data = st_geometry(r_shp %>% filter(Regional.Council %in% reg)),
+            fill = 'white') + 
+    geom_sf(data = st_geometry(shapefiles), 
+            fill = 'blue') + #sa3_df$SA3_chx) + #figure out a way to get filled
+    labs(main = paste("Regional breakdown of main means of travel to education"))
+  return(list(plot = plt))
+}
+
+###########################
+testing <- sa_in_bigger(teu, 'Bay of Plenty Region')
+testing$plot
+```
+
+```{r pointsWithMaps, include = TRUE}
+# try the demo from:
+# https://bookdown.org/fede_gazzelloni/UPDVwR/mapchallenges/cases2023/posts2023/day1_points/day1_points.html
+
+library(tidyverse)
+library(stars)
+
+# # reshape dataset (wider) and summarise
+# mini_df <- census %>%
+#   filter(shortCode %in% 'teu') %>%
+#   pivot_wider(values_from = Value,
+#               values_fn = sum,
+#               names_from = Variable,
+#               id_cols = c(Year, Regional.Council))
+
+# summarise dataset
+mini_df <- census %>%
+  filter(shortCode %in% 'teu') %>%
+  group_by(Year, Regional.Council, SA3_chx, Variable) %>%
+  summarise(Value = sum(Value))
+
+
+
+
+# ... actually, try this leaflet version instead
+# https://bookdown.org/fede_gazzelloni/UPDVwR/mapchallenges/cases2023/posts2023/day7_navigation/day7_navigation.html
+library(tidyverse)
+library(leaflet)
+library(viridisLite)
+
+mini_df %>% glimpse
+
+# set colour palette
+colPalette <- colorFactor("colPalette", domain = mini_df$Regional.Council)
+
+# retrieve shapefile centroids
+rc_centres <- st_centroid(r_shp, quiet = TRUE) %>%
+  dplyr::mutate(lon = sf::st_coordinates(.)[,2],
+                lat = sf::st_coordinates(.)[,1])
+rc_bounds <- getbb("New Zealand")
+
+leaflet(mini_df) %>%
+  setView(175.5, -41, zoom =5) %>%
+  addTiles() %>%
+  addTiles(group = "OSM (default)") %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  addCircles(lng = ~rc_centres$lon,
+             lat = ~rc_centres$lat,
+             fill = TRUE,
+             stroke = TRUE,
+             color = 'blue', #~colPalette(rc_centres$RC),
+             weight = 1000) %>%
+  addMiniMap(r_shp) %>%
+  mapOptions() %>%
+  addMeasure() %>%
+  addScaleBar()
+
+```
+
+
+```{r r5rIsochrone, include = TRUE, fig.cap="trying isochrones at SA3 level"}
+# built from the r5r intro vignette
+# https://cran.r-project.org/web/packages/r5r/vignettes/r5r.html
+
+# # initialise Jave with rJava, check version = '21.0.5'
+# rJava::.jinit()
+# rJava::.jcall("java.lang.System", "S", "getProperty", "java.version")
+
+
+```
+
+
+
+
+```{r waitingToSeeIfImNeeded, include = TRUE, fig.cap='These are meant to be shapefiles and stuff'}
+# # read in the sa3 shape file and filter to just the identifiers and geometry
+# sa3Shp <- st_read(shp_sa3, quiet = TRUE)   %>%
+#   select(c(1, 2, geometry)) %>%
+#   rename(SA3 = 1,
+#          SA3_chx = 2) %>%
+#   filter(SA3_chx %in% unique(teu$SA3_chx[teu$Regional.Council %in% rc1]))
+# 
+# # summarise data to sa3, retain year, region, sa3, and mode of travel
+# sa3_in_reg <- teu %>% 
+#   filter(Regional.Council %in% rc1) %>%
+#   group_by(Year, Regional.Council, SA3_chx, TravelMode, Value) %>%
+#   summarise(Value = sum(Value))
+#   
+# ###########################
+# 
+#   
+
+# 
+# # one big plot highlighting the target regions
+# reg_on_map <- function(dat, shp, reg){
+#   
+#   # regional shapefile
+#   
+#   # territorial shapefile
+#   
+#   # SA2? is there an SA3 shapefile?
+#   
+# }
+# 
+#   
+# 
+# # then create separate plots for each region
+# # Tauranga
+# # this creates a plot of the whole country with region shapes
+# ggplot(data = teu %>% 
+#          filter(Regional.Council %in% rc1) %>% 
+#          group_by(Year, Regional.Council, TravelMode) %>% 
+#          summarise(total = sum(Value)),
+#        )+
+#   geom_sf(data = st_geometry(r_shp %>% filter(Regional.Council %in% rc1))) + # %>% filter(REGC2023_1 %in% reg1))
+#   geom_sf(data = st_geometry(sa3Shp ), fill = 'blue') #%>% 
+#   #           filter(r_shp[,2] %in% rc1))
+#   
+#   
+
+
+
+```
+
+
+
 
 ```{r plotModeOfTravelFacetRegions, include = TRUE, echo = FALSE, fig.show='hold', out.width="50%", fig.cap="Main means of travel across regions"}
-par(mfrow= c(1, 2))
-# plot the main means of travel, faceted across regions
-ggplot(data = teu, aes(x = TravelMode, y = Value, fill = TravelMode))+
-  geom_col()+
-  facet_wrap(facets=~Region, ncol = 4) +
-  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
-  scale_x_discrete(labels = NULL)+
-  labs(title= "Means of travel by region",
-       y = "Main means of travel")
-
-# plot the main means of travel across regions, suppress Auckland
-ggplot(data = teu[teu$Region!="Auckland",], aes(x = TravelMode, y = Value, fill = TravelMode))+
-  geom_col()+
-  facet_wrap(facets=~Region, ncol = 4) +
-  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
-  scale_x_discrete(labels = NULL)+
-  labs(title= "Means of travel by region: Auckland suppressed",
-       y = "Main means of travel")
-par(mfrow= c(1, 1))         
+# par(mfrow= c(1, 2))
+# # plot the main means of travel, faceted across regions
+# ggplot(data = teu, aes(x = TravelMode, y = Value, fill = TravelMode))+
+#   geom_col()+
+#   facet_wrap(facets=~Region, ncol = 4) +
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+#   scale_x_discrete(labels = NULL)+
+#   labs(title= "Means of travel by region",
+#        y = "Main means of travel")
+# 
+# # plot the main means of travel across regions, suppress Auckland
+# ggplot(data = teu[teu$Region!="Auckland",], aes(x = TravelMode, y = Value, fill = TravelMode))+
+#   geom_col()+
+#   facet_wrap(facets=~Region, ncol = 4) +
+#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+#   scale_x_discrete(labels = NULL)+
+#   labs(title= "Means of travel by region: Auckland suppressed",
+#        y = "Main means of travel")
+# par(mfrow= c(1, 1))         
 ```
 
 
 ```{r regionFocussedPlots, include = TRUE, echo=FALSE, fig.show="hold", out.width="50%", fig.cap='Travel to education: region-focussed plots'}
-# develop plots that focus on regional effects, with particular focus on 
-# the top five, Auckland, Canterbury, Wellington, Waikato, Bay of Plenty
-# in each region, visualise the change over time for the region using facets
-
-target_regions <- c("Auckland", "Canterbury", "Wellington", "Waikato", "Bay of Plenty")
-
-plot_regions <- function(dat, region = NULL, variable = NULL, mode_of_travel= NULL, territory = NULL){
-  fig <- plot_ly(teu[dat$Region==region, ],
-                     x = ~Value[Year=="2018"], 
-                     y = ~TravelMode[Year=="2018"],
-                     name = "2018",
-                     type = 'bar',
-                 width = 1000,
-                 height = 1000)%>%
-  group_by(dat$Year[dat$Region==region]) %>%
-  add_trace(x = ~Value[Year=="2023"],
-            y = ~TravelMode[Year=="2023"],
-            name = "2023") %>%
-  layout(title = paste("Main means of travel by year: ", region),
-         xaxis = list(title = "Value"), 
-         yaxis = list(title = "Means of travel"))
-  
-  return(fig)
-}
-
-
-# generate plots for the areas with highest travel to education
-fig_ak <- plot_regions(teu, region = "Auckland")
-fig_cnt <- plot_regions(teu, region = "Canterbury")
-fig_wgn <- plot_regions(teu, region = "Wellington")
-fig_wkt <- plot_regions(teu, region = "Waikato")
-fig_bop <- plot_regions(teu, region = "Bay of Plenty")
-fig_mwt <- plot_regions(teu, region = "Manawatu-Whanganui")
-
-fig <- subplot(fig_ak, fig_cnt, fig_wgn, fig_wkt, fig_bop, fig_mwt, nrows = 3) %>%
-  layout()
-
-fig
+# # develop plots that focus on regional effects, with particular focus on 
+# # the top five, Auckland, Canterbury, Wellington, Waikato, Bay of Plenty
+# # in each region, visualise the change over time for the region using facets
+# 
+# # target_regions <- c("Auckland", "Canterbury", "Wellington", "Waikato", "Bay of Plenty")
+# 
+# plot_regions <- function(dat, region = NULL, variable = NULL, mode_of_travel= NULL, territory = NULL){
+#   fig <- plot_ly(teu[dat$Region==region, ],
+#                      x = ~Value[Year=="2018"], 
+#                      y = ~TravelMode[Year=="2018"],
+#                      name = "2018",
+#                      type = 'bar',
+#                  width = 1000,
+#                  height = 1000)%>%
+#   group_by(dat$Year[dat$Region==region]) %>%
+#   add_trace(x = ~Value[Year=="2023"],
+#             y = ~TravelMode[Year=="2023"],
+#             name = "2023") %>%
+#   layout(title = paste("Main means of travel by year: ", region),
+#          xaxis = list(title = "Value"), 
+#          yaxis = list(title = "Means of travel"))
+#   
+#   return(fig)
+# }
+# 
+# 
+# # generate plots for the areas with highest travel to education
+# fig_ak <- plot_regions(teu, region = "Auckland")
+# fig_cnt <- plot_regions(teu, region = "Canterbury")
+# fig_wgn <- plot_regions(teu, region = "Wellington")
+# fig_wkt <- plot_regions(teu, region = "Waikato")
+# fig_bop <- plot_regions(teu, region = "Bay of Plenty")
+# fig_mwt <- plot_regions(teu, region = "Manawatu-Whanganui")
+# 
+# fig <- subplot(fig_ak, fig_cnt, fig_wgn, fig_wkt, fig_bop, fig_mwt, nrows = 3) %>%
+#   layout()
+# 
+# fig
 
 ```
 
 Geographic plots
 
 ```{r plotGeographicData, include = TRUE, echo = FALSE}
-# read in shapefiles
-m_sa1 <- st_read(shp_sa1) %>%
-  select(c(1,6)) %>%
-  rename(SA1=1)%>%
-  mutate(SA1=as.integer(SA1))
-# need to point ggplot to the [geometry] column, eg. stat_sf(mapping=aes(geometry =geometry))
+# # read in shapefiles
+# m_sa1 <- st_read(shp_sa1) %>%
+#   select(c(1,6)) %>%
+#   rename(SA1=1)%>%
+#   mutate(SA1=as.integer(SA1))
+# # need to point ggplot to the [geometry] column, eg. stat_sf(mapping=aes(geometry =geometry))
+# 
+# m_sa2 <- st_read(shp_sa2) %>%
+#   select(c(1, 2, 6)) %>%
+#   rename(SA2 = 1, SA2_chx = 2, SA2_geom = geometry) %>%
+#   mutate(SA2 = as.integer(SA2)) 
+#   
+# m_ta <- st_read(shp_ta) %>%
+#   select(c(1, 2, 6)) %>%
+#   filter() %>%
+#   rename(TA = 1, Territorial.Authority = 2) %>%
+#   mutate(TA = as.integer(TA))
+# 
+# 
+# m_rc <- st_read(shp_rc)
+# 
+# 
+# 
+# # group the teu data by SA3 and variable
+# teu_map <- left_join(teu, m_sa1, by = "SA1",
+#                      relationship = 'many-to-one') %>%
+#   group_by(Territorial.Authority, Variable)
+# 
+# 
+# ggplot(data = teu_map) +
+#   geom_sf(mapping = aes(geometry = geometry, fill = Variable))+
+#   facet_wrap(~TravelMode)
 
-m_sa2 <- st_read(shp_sa2) %>%
-  select(c(1, 2, 6)) %>%
-  rename(SA2 = 1, SA2_chx = 2, SA2_geom = geometry) %>%
-  mutate(SA2 = as.integer(SA2)) 
-  
-m_ta <- st_read(shp_ta) %>%
-  select(c(1, 2, 6)) %>%
-  filter() %>%
-  rename(TA = 1, Territorial.Authority = 2) %>%
-  mutate(TA = as.integer(TA))
+# # plots by region
+# ta_map <- left_join(census_TA, m_ta, by = "Territorial.Authority",
+#                        relationship = 'many-to-one')
+# 
+# ggplot(data = ta_map) +
+#   geom_sf(mapping = aes(geometry = geometry))
+```
 
 
-m_rc <- st_read(shp_rc)
+```{r cleanUp}
+# r5r::stop_r5()
+# rJava::.jgc(R.gc = TRUE)
 
-
-
-# group the teu data by SA3 and variable
-teu_map <- left_join(teu, m_sa1, by = "SA1",
-                     relationship = 'many-to-one') %>%
-  group_by(Territorial.Authority, Variable)
-
-
-ggplot(data = teu_map) +
-  geom_sf(mapping = aes(geometry = geometry, fill = Variable))+
-  facet_wrap(~TravelMode)
-
-# plots by region
-ta_map <- left_join(census_TA, m_ta, by = "Territorial.Authority",
-                       relationship = 'many-to-one')
-
-ggplot(data = ta_map) +
-  geom_sf(mapping = aes(geometry = geometry))
 ```
 
