@@ -63,6 +63,22 @@
       ],
       "Hash": "5122bb14d8736372411f955e1b16bc8a"
     },
+    "OpenStreetMap": {
+      "Package": "OpenStreetMap",
+      "Version": "0.4.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "ggplot2",
+        "grDevices",
+        "methods",
+        "rJava",
+        "raster",
+        "sp"
+      ],
+      "Hash": "041ab031ca9b5b4ad6b45982f93c5b99"
+    },
     "PROJ": {
       "Package": "PROJ",
       "Version": "0.5.0",
@@ -105,6 +121,19 @@
         "utils"
       ],
       "Hash": "6b868847b365672d6c1677b1608da9ed"
+    },
+    "RcppEigen": {
+      "Package": "RcppEigen",
+      "Version": "0.3.4.0.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "Rcpp",
+        "stats",
+        "utils"
+      ],
+      "Hash": "4ac8e423216b8b70cb9653d1b3f71eb9"
     },
     "V8": {
       "Package": "V8",
@@ -463,14 +492,14 @@
     },
     "data.table": {
       "Package": "data.table",
-      "Version": "1.16.2",
+      "Version": "1.16.4",
       "Source": "Repository",
       "Repository": "CRAN",
       "Requirements": [
         "R",
         "methods"
       ],
-      "Hash": "2e00b378fc3be69c865120d9f313039a"
+      "Hash": "38bbf05fc2503143db4c734a7e5cab66"
     },
     "dbplyr": {
       "Package": "dbplyr",
@@ -499,6 +528,18 @@
         "withr"
       ],
       "Hash": "39b2e002522bfd258039ee4e889e0fd1"
+    },
+    "deldir": {
+      "Package": "deldir",
+      "Version": "2.0-4",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "grDevices",
+        "graphics"
+      ],
+      "Hash": "24754fce82729ff85317dd195b6646a8"
     },
     "dichromat": {
       "Package": "dichromat",
@@ -688,6 +729,13 @@
       ],
       "Hash": "15e9634c0fcd294799e9b2e929ed1b86"
     },
+    "geodist": {
+      "Package": "geodist",
+      "Version": "0.1.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Hash": "44be46e0ab530e07869976da2e85490d"
+    },
     "geojsonsf": {
       "Package": "geojsonsf",
       "Version": "2.0.3",
@@ -817,6 +865,21 @@
         "stats"
       ],
       "Hash": "de949855009e2d4d0e52a844e30617ae"
+    },
+    "gtfsio": {
+      "Package": "gtfsio",
+      "Version": "1.2.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "data.table",
+        "fs",
+        "jsonlite",
+        "utils",
+        "zip"
+      ],
+      "Hash": "c88ef74fb18827ab67963a8a4d52304c"
     },
     "haven": {
       "Package": "haven",
@@ -956,6 +1019,19 @@
         "uuid"
       ],
       "Hash": "99df65cfef20e525ed38c3d2577f7190"
+    },
+    "interp": {
+      "Package": "interp",
+      "Version": "1.1-6",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "Rcpp",
+        "RcppEigen",
+        "deldir"
+      ],
+      "Hash": "824328a500468b76e61402b2cb3033df"
     },
     "isoband": {
       "Package": "isoband",
@@ -1334,6 +1410,21 @@
       ],
       "Hash": "484fb25b6267ae0a885511dbac53f193"
     },
+    "osmextract": {
+      "Package": "osmextract",
+      "Version": "0.5.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "httr",
+        "jsonlite",
+        "sf",
+        "tools",
+        "utils"
+      ],
+      "Hash": "52ce2cb35ed39b224fedddbc22daa113"
+    },
     "pillar": {
       "Package": "pillar",
       "Version": "1.9.0",
@@ -1517,9 +1608,14 @@
     },
     "r5r": {
       "Package": "r5r",
-      "Version": "2.0",
-      "Source": "Repository",
-      "Repository": "CRAN",
+      "Version": "2.0.0",
+      "Source": "GitHub",
+      "RemoteType": "github",
+      "RemoteHost": "api.github.com",
+      "RemoteRepo": "r5r",
+      "RemoteUsername": "ipeaGIT",
+      "RemoteSha": "4a929d26adfac55f5182f7518927400f53ab74f0",
+      "RemoteSubdir": "r-package",
       "Requirements": [
         "R",
         "checkmate",
@@ -1534,7 +1630,7 @@
         "utils",
         "zip"
       ],
-      "Hash": "afe9b8d82eedb1ceb2414f3b5e67e4b0"
+      "Hash": "818d8b9bc9b44e1565cb54807f158fdc"
     },
     "rJava": {
       "Package": "rJava",
@@ -2098,6 +2194,25 @@
         "withr"
       ],
       "Hash": "829f27b9c4919c16b593794a6344d6c0"
+    },
+    "tidytransit": {
+      "Package": "tidytransit",
+      "Version": "1.7.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "data.table",
+        "digest",
+        "dplyr",
+        "geodist",
+        "gtfsio",
+        "hms",
+        "jsonlite",
+        "rlang",
+        "sf"
+      ],
+      "Hash": "4ba5a23dadee00e7d0cef387df7acea3"
     },
     "tidyverse": {
       "Package": "tidyverse",

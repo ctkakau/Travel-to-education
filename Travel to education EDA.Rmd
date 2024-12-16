@@ -7,20 +7,30 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE, warnings = FALSE}
-knitr::opts_chunk$set(include = FALSE, echo = FALSE, warnings = FALSE, message = FALSE)
+# set default options for knitting the document
+knitr::opts_chunk$set(
+  include = FALSE, 
+  echo = FALSE, 
+  warnings = FALSE, 
+  message = FALSE)
 
-options(java.parameters = "-Xmx4G")
+# set java memory to 4GB, turn off scientific notation
+options(java.parameters = "-Xmx4G",
+        scipen = 0
+        )
 
-
+# bring in the libraries
 library(data.table)
-# library(dplyr)
+library(dplyr)
 library(ggplot2)
+library(httr)
+library(jsonlite)
 library(leaflet)
 library(leaflet.providers)
 library(osmdata)
 library(plotly)
 library(rJava)
-library(r5r)
+#library(r5r)
 library(sf)
 library(stars)
 library(sys)
@@ -30,8 +40,7 @@ library(viridisLite)
 
 # set theme for ggplot2
 ggplot2::theme_set(theme_classic())
-# turn off scientific notation
-options(scipen = n)
+
 
 ```
 
@@ -166,6 +175,8 @@ if (!file.exists(prev_written)) {
     mutate(shortCode = ifelse(substr(Var_Code, 1, 2) == "1y","1y",
       ifelse(substr(Var_Code, 1, 2) == "5y", "5y",
       sub("^(\\D+).*", "\\1", Var_Code)))
+      
+      # # no longer required
       # substr(Var_Code, 1, 3) == "tee" ~ "tee",
       # substr(Var_Code, 1, 3) == "teu" ~ "teu",
       # substr(Var_Code, 1, 2) == "ib" ~ "ib",
@@ -174,6 +185,10 @@ if (!file.exists(prev_written)) {
   
   # regex substring
   # unique(sub("^(\\D+).*", "\\1", unique(census$Var_Code)))
+  
+  
+  
+  
   # rename columns
   names(census)[4:5] <- c("Year", "Value")
   
@@ -1185,8 +1200,9 @@ sa_in_bigger <- function(df, reg){
 }
 
 ###########################
-testing <- sa_in_bigger(teu, 'Bay of Plenty Region')
-testing$plot
+# test with 'Bay of Plenty Region'
+sa_in_bigger(teu, 'Bay of Plenty Region')$plot
+
 ```
 
 ```{r pointsWithMaps, include = TRUE}
@@ -1210,6 +1226,16 @@ mini_df <- census %>%
   group_by(Year, Regional.Council, SA3_chx, Variable) %>%
   summarise(Value = sum(Value))
 
+# retrieve schools dataset from data.govt.nz, there are around 2500 schools, 
+# so limit to 3000
+
+qry <- paste('https://catalogue.data.govt.nz/api/3/action/datastore_search?resource_id=4b292323-9fcc-41f8-814b-3c7b19cf14b3&limit=3000')
+schools <- httr::GET(qry) 
+school_data <- fromJSON(rawToChar(schools$content))$result$records %>%
+  select(School_Id, Org_Name, Territorial_Authority, Regional_Council, 
+         Statistical_Area_2_Code, Statistical_Area_2_Description, 
+         Latitude, Longitude, Total, Isolation_Index)
+
 
 
 
@@ -1222,26 +1248,31 @@ library(viridisLite)
 mini_df %>% glimpse
 
 # set colour palette
-colPalette <- colorFactor("colPalette", domain = mini_df$Regional.Council)
+colPalette <- leaflet::colorFactor("viridis", 
+                                   domain = factor(mini_df$Regional.Council))
 
 # retrieve shapefile centroids
 rc_centres <- st_centroid(r_shp, quiet = TRUE) %>%
   dplyr::mutate(lon = sf::st_coordinates(.)[,2],
                 lat = sf::st_coordinates(.)[,1])
-rc_bounds <- getbb("New Zealand")
+
+# get bounding box and then modify to jump the antimeridian
+rc_bounds <- (getbb("New Zealand") + c(360, 90)) %% c(360)-c(0, 90)
 
 leaflet(mini_df) %>%
   setView(175.5, -41, zoom =5) %>%
   addTiles() %>%
   addTiles(group = "OSM (default)") %>%
   addProviderTiles(providers$OpenStreetMap) %>%
-  addCircles(lng = ~rc_centres$lon,
-             lat = ~rc_centres$lat,
+  addCircleMarkers(lng = ~school_data$Longitude,
+             lat = ~school_data$Latitude,
              fill = TRUE,
              stroke = TRUE,
-             color = 'blue', #~colPalette(rc_centres$RC),
-             weight = 1000) %>%
-  addMiniMap(r_shp) %>%
+             color = colPalette(school_data$Regional_Council),
+             weight = 1,
+             fillOpacity = 0.2,
+             popup = ~school_data$Org_Name) %>%
+  addMiniMap() %>%
   mapOptions() %>%
   addMeasure() %>%
   addScaleBar()
@@ -1249,186 +1280,157 @@ leaflet(mini_df) %>%
 ```
 
 
-```{r r5rIsochrone, include = TRUE, fig.cap="trying isochrones at SA3 level"}
-# built from the r5r intro vignette
-# https://cran.r-project.org/web/packages/r5r/vignettes/r5r.html
+```{r nzOSMExtract, include = TRUE, fig.cap='example from Data Visualization 30 day map challenge'}
+# example from:  https://bookdown.org/fede_gazzelloni/UPDVwR/mapchallenges/cases2023/posts2023/day15_openstreetmap/day15_openstreetmap.html
 
-# # initialise Jave with rJava, check version = '21.0.5'
-# rJava::.jinit()
-# rJava::.jcall("java.lang.System", "S", "getProperty", "java.version")
+# get bounding box for NZ
+nz_bb <- osmdata::getbb('New Zealand')
+library(osmextract)
+nz_pbf <- osmextract::oe_match("New Zealand")
+nz_download <- osmextract::oe_download(file_url = nz_pbf$url, 
+                                       download_directory = getwd()
+                                       )
+# nz takes 1429-1431
 
+####
+# bounding box for Bay of Plenty using osmdata
+bop_bb <- osmdata::getbb('Bay of Plenty')
+
+# construct a map object focussed on just bop
+bop_map <- OpenStreetMap::openmap(
+  c(bop_bb['y', 'max'], bop_bb['x', 'min'] ),
+  c(bop_bb['y', 'min'], bop_bb['x', 'max']),
+  zoom = 10,
+  minNumTiles = 9L,
+  type = 'osm'
+)
+
+# use OpenStreetMap to plot the map
+OpenStreetMap::plot.OpenStreetMap(bop_map)
+
+# # retrieve features:  schools
+# bop <- opq(bop_bb) %>%
+#   add_osm_feature(
+#     key = 'school', 
+#     value = 'primary') %>%
+#   osmdata_sf()
+# # fails, no features retrieved
+# bop
+```
+
+Query from data.govt.nz to bring back school locations for Regional_Council = Wellington Region, Territorial_Authority = Lower Hutt City
+
+[link](https://catalogue.data.govt.nz/dataset/directory-of-educational-institutions/resource/4b292323-9fcc-41f8-814b-3c7b19cf14b3?filters=Regional_Council%3AWellington%20Region%7CRegional_Council%3ABay%20of%20Plenty%20Region%7CTerritorial_Authority%3ALower%20Hutt%20City) 
+
+
+e.g first five results
+https://catalogue.data.govt.nz/api/3/action/datastore_search?resource_id=4b292323-9fcc-41f8-814b-3c7b19cf14b3&limit=5 
+
+e.g. containing 'jones'
+https://catalogue.data.govt.nz/api/3/action/datastore_search?resource_id=4b292323-9fcc-41f8-814b-3c7b19cf14b3&q=jones
+
+e.g. sql for jones
+"https://catalogue.data.govt.nz/api/3/action/datastore_search_sql?sql=SELECT * from "4b292323-9fcc-41f8-814b-3c7b19cf14b3" WHERE title LIKE 'jones'"
+
+```{r isoChroneBOP}
+# use the tutorial at:
+# https://cran.r-project.org/web/packages/r5r/vignettes/isochrones.html
+
+# tutorial requires lots of memory for java, so change options before calling library
+library(sf)
+library(data.table)
+library(ggplot2)
+library(interp) 
+library(tidytransit)
+
+# get bounding box for NZ
+nz_bb <- osmdata::getbb('New Zealand')
+library(osmextract)
+nz_pbf <- osmextract::oe_match("New Zealand")
+nz_download <- osmextract::oe_download(file_url = nz_pbf$url, 
+                                       download_directory = getwd()
+                                       )
+# nz takes 1429-1431
+
+####
+# bounding box for Bay of Plenty using osmdata
+bop_bb <- osmdata::getbb('Bay of Plenty')
+
+# construct a map object focussed on just bop
+bop_map <- OpenStreetMap::openmap(
+  c(bop_bb['y', 'max'], bop_bb['x', 'min'] ),
+  c(bop_bb['y', 'min'], bop_bb['x', 'max']),
+  zoom = 10,
+  minNumTiles = 9L,
+  type = 'osm'
+)
+
+# # use OpenStreetMap to plot the map
+# OpenStreetMap::plot.OpenStreetMap(bop_map)
+
+
+# build a routable transport network, the demo uses built in data, but let's try
+# with the nzpbf from earlier from earlier, repeated here
+
+########################
+
+# the demo reads in points, we can subset the school_data for bop region
+bop_schools <- school_data %>% filter(Regional_Council=="Bay of Plenty Region")
+
+
+## isochrone parameters
+# isochrone intervals
+time_intervals <- seq(0, 60, 5)
+
+# routing inputs
+mode <- c('WALK', 'TRANSIT', 'CYCLE')
+max_walk_time <-25  # minutes
+max_trip_duration <- 60 # minutes
+time_window <- 120 # minutes
+departure_datetime <- as.POSIXct("12-03-2024 07:30:00",
+                                 format = "%d-%m-%Y %H:%M:%S")
+
+# not in the tutorial, but we need to bring relevant information together
+# and put in a folder for r5r to search ...loading the nz_map data instead
+
+
+# initialise java and then check something
+rJava::.jinit()
+rJava::.jcall("java.lang.System", "S", "getProperty", "java.version")
+
+
+options(java.parameters = "-Xmx4G")
+library(r5r)
+
+r5r_core <- r5r::setup_r5(getwd())
+#with NZ map 1434-1436
+# reports multiple errors and skips
+
+
+# calculate travel time matrix
+iso_bop <- r5r::isochrone(r5r_core, 
+                          origins = bop_schools, 
+                          mode = mode, 
+                          cutoff = time_intervals,
+                          sample_size = 1,
+                          departure_datetime = departure_datetime,
+                          max_walk_time = max_walk_time,
+                          max_trip_duration = max_trip_duration,
+                          time_window = time_window,
+                          progress = FALSE
+                          )
+
+r5r::stop_r5(r5r_core)
 
 ```
 
-
-
-
-```{r waitingToSeeIfImNeeded, include = TRUE, fig.cap='These are meant to be shapefiles and stuff'}
-# # read in the sa3 shape file and filter to just the identifiers and geometry
-# sa3Shp <- st_read(shp_sa3, quiet = TRUE)   %>%
-#   select(c(1, 2, geometry)) %>%
-#   rename(SA3 = 1,
-#          SA3_chx = 2) %>%
-#   filter(SA3_chx %in% unique(teu$SA3_chx[teu$Regional.Council %in% rc1]))
-# 
-# # summarise data to sa3, retain year, region, sa3, and mode of travel
-# sa3_in_reg <- teu %>% 
-#   filter(Regional.Council %in% rc1) %>%
-#   group_by(Year, Regional.Council, SA3_chx, TravelMode, Value) %>%
-#   summarise(Value = sum(Value))
-#   
-# ###########################
-# 
-#   
-
-# 
-# # one big plot highlighting the target regions
-# reg_on_map <- function(dat, shp, reg){
-#   
-#   # regional shapefile
-#   
-#   # territorial shapefile
-#   
-#   # SA2? is there an SA3 shapefile?
-#   
-# }
-# 
-#   
-# 
-# # then create separate plots for each region
-# # Tauranga
-# # this creates a plot of the whole country with region shapes
-# ggplot(data = teu %>% 
-#          filter(Regional.Council %in% rc1) %>% 
-#          group_by(Year, Regional.Council, TravelMode) %>% 
-#          summarise(total = sum(Value)),
-#        )+
-#   geom_sf(data = st_geometry(r_shp %>% filter(Regional.Council %in% rc1))) + # %>% filter(REGC2023_1 %in% reg1))
-#   geom_sf(data = st_geometry(sa3Shp ), fill = 'blue') #%>% 
-#   #           filter(r_shp[,2] %in% rc1))
-#   
-#   
-
-
-
-```
+Metro canterbury GET query for GTFS
+https://apis.metroinfo.co.nz/rti/gtfs/v1/gtfs.zip
+Bay of Plenty GTFS
+https://www.baybus.co.nz/help-and-contact/general-transit-feed-specification/
+https://www.baybus.co.nz/assets/GTFS/boprc-nz-rits-6-1.zip 
 
 
 
 
-```{r plotModeOfTravelFacetRegions, include = TRUE, echo = FALSE, fig.show='hold', out.width="50%", fig.cap="Main means of travel across regions"}
-# par(mfrow= c(1, 2))
-# # plot the main means of travel, faceted across regions
-# ggplot(data = teu, aes(x = TravelMode, y = Value, fill = TravelMode))+
-#   geom_col()+
-#   facet_wrap(facets=~Region, ncol = 4) +
-#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
-#   scale_x_discrete(labels = NULL)+
-#   labs(title= "Means of travel by region",
-#        y = "Main means of travel")
-# 
-# # plot the main means of travel across regions, suppress Auckland
-# ggplot(data = teu[teu$Region!="Auckland",], aes(x = TravelMode, y = Value, fill = TravelMode))+
-#   geom_col()+
-#   facet_wrap(facets=~Region, ncol = 4) +
-#   scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
-#   scale_x_discrete(labels = NULL)+
-#   labs(title= "Means of travel by region: Auckland suppressed",
-#        y = "Main means of travel")
-# par(mfrow= c(1, 1))         
-```
-
-
-```{r regionFocussedPlots, include = TRUE, echo=FALSE, fig.show="hold", out.width="50%", fig.cap='Travel to education: region-focussed plots'}
-# # develop plots that focus on regional effects, with particular focus on 
-# # the top five, Auckland, Canterbury, Wellington, Waikato, Bay of Plenty
-# # in each region, visualise the change over time for the region using facets
-# 
-# # target_regions <- c("Auckland", "Canterbury", "Wellington", "Waikato", "Bay of Plenty")
-# 
-# plot_regions <- function(dat, region = NULL, variable = NULL, mode_of_travel= NULL, territory = NULL){
-#   fig <- plot_ly(teu[dat$Region==region, ],
-#                      x = ~Value[Year=="2018"], 
-#                      y = ~TravelMode[Year=="2018"],
-#                      name = "2018",
-#                      type = 'bar',
-#                  width = 1000,
-#                  height = 1000)%>%
-#   group_by(dat$Year[dat$Region==region]) %>%
-#   add_trace(x = ~Value[Year=="2023"],
-#             y = ~TravelMode[Year=="2023"],
-#             name = "2023") %>%
-#   layout(title = paste("Main means of travel by year: ", region),
-#          xaxis = list(title = "Value"), 
-#          yaxis = list(title = "Means of travel"))
-#   
-#   return(fig)
-# }
-# 
-# 
-# # generate plots for the areas with highest travel to education
-# fig_ak <- plot_regions(teu, region = "Auckland")
-# fig_cnt <- plot_regions(teu, region = "Canterbury")
-# fig_wgn <- plot_regions(teu, region = "Wellington")
-# fig_wkt <- plot_regions(teu, region = "Waikato")
-# fig_bop <- plot_regions(teu, region = "Bay of Plenty")
-# fig_mwt <- plot_regions(teu, region = "Manawatu-Whanganui")
-# 
-# fig <- subplot(fig_ak, fig_cnt, fig_wgn, fig_wkt, fig_bop, fig_mwt, nrows = 3) %>%
-#   layout()
-# 
-# fig
-
-```
-
-Geographic plots
-
-```{r plotGeographicData, include = TRUE, echo = FALSE}
-# # read in shapefiles
-# m_sa1 <- st_read(shp_sa1) %>%
-#   select(c(1,6)) %>%
-#   rename(SA1=1)%>%
-#   mutate(SA1=as.integer(SA1))
-# # need to point ggplot to the [geometry] column, eg. stat_sf(mapping=aes(geometry =geometry))
-# 
-# m_sa2 <- st_read(shp_sa2) %>%
-#   select(c(1, 2, 6)) %>%
-#   rename(SA2 = 1, SA2_chx = 2, SA2_geom = geometry) %>%
-#   mutate(SA2 = as.integer(SA2)) 
-#   
-# m_ta <- st_read(shp_ta) %>%
-#   select(c(1, 2, 6)) %>%
-#   filter() %>%
-#   rename(TA = 1, Territorial.Authority = 2) %>%
-#   mutate(TA = as.integer(TA))
-# 
-# 
-# m_rc <- st_read(shp_rc)
-# 
-# 
-# 
-# # group the teu data by SA3 and variable
-# teu_map <- left_join(teu, m_sa1, by = "SA1",
-#                      relationship = 'many-to-one') %>%
-#   group_by(Territorial.Authority, Variable)
-# 
-# 
-# ggplot(data = teu_map) +
-#   geom_sf(mapping = aes(geometry = geometry, fill = Variable))+
-#   facet_wrap(~TravelMode)
-
-# # plots by region
-# ta_map <- left_join(census_TA, m_ta, by = "Territorial.Authority",
-#                        relationship = 'many-to-one')
-# 
-# ggplot(data = ta_map) +
-#   geom_sf(mapping = aes(geometry = geometry))
-```
-
-
-```{r cleanUp}
-# r5r::stop_r5()
-# rJava::.jgc(R.gc = TRUE)
-
-```
 

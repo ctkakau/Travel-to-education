@@ -1,0 +1,501 @@
+---
+title: "Geospatial analysis"
+author: 'Chad Kakau: 300212228'
+date: "2024-12-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE, warning = FALSE, message = FALSE)
+# clear the environment
+rm(list=ls())
+try(r5r::stop_r5())
+try(rJava::.jgc(R.gc = TRUE))
+```
+
+
+
+Trying the isochrone vignette in r5r:
+
+https://cran.r-project.org/web/packages/r5r/vignettes/isochrones.html
+
+but it doesn't create a network.dat file, which is the file that is used as the multimodal transport model.
+
+The tutorial runs along the following lines for generating and visualising a set of isochrones. The isochrones function generates polygons that represent boundaries for travel time from a designated origin:  
+
+  1. setup a multi-modal traffic network (completed above)
+  2. establish points of interest (to be used as origins)
+  3. establish the isochrones/polygons
+  4. visualise the results as a plot
+  
+When running the tutorial with the full map of New Zealand and all New Zealand schools, the tutorial fails to create the network.  This manifests as an error when trying to run the isochrone() function, pointing to a missing parameter, in this case the network.dat file.  The r5r::setup_r5() function runs through and with verbose = TRUE, has a lot of errors and warnngs, but finishes with the message "Finished building network.dat...", but no file exists.
+
+Some possible issues online point to:  
+
+  - failing when trying to load a big osm.pbf file, which should result in an error stating that the file has timed out
+    - the NZ map appears to be reasonably small, but when using standard projection it draws the map the long way round rather than crossing the anti-meridian (i.e. Chatham Islands are across the dateline, so are drawn first at -180 deg)
+  
+There were a few solutions online, but the one that seemed to work was reducing the size of the map/network by cropping the OpenStreetMap file to a smaller area.  In testing, I cropped the map to just include the Bay of Plenty region
+
+Trying some solutions:
+
+  - use osmosis to crop the files to something smaller (e.g. Bay of Plenty)
+    - osmosis is a command line function, download and install here: https://learnosm.org/en/osm-data/osmosis/  
+    - ... and can use the osmosis examples here for filtering by boundaries: https://wiki.openstreetmap.org/wiki/Osmosis/Examples
+    - in the cmd line, navigate to the directory with the big osm.pbf file then use:
+      - osmosis --read-pbf input.osm.pbf \ --bounding-box left=175.8 bottom =-39 right=178.1 top=36.9 \ --write-pbf cropped.osm.pbf  where 'input.osm.pbf' is the name of the big (e.g. country) file and 'cropped.osm.pbf' is the name you want to give the cropped file.
+  
+Outcome:  setup_r5() runs successfully.  
+After a bit more testing, try to increase the size of the osm.pbf to include NZ[-Chatham Islands]
+
+But for now...
+
+# 1. setup a multimodal network  
+
+The setup function requires a path to the directory holding an OpenStreetMap and a public transport network feed (gtsf.zip).  Requirements for creating a network are a directory holding:  
+
+  - an open street map (format:  osm.pbf) [required]
+  - a transit network (format: gtsf.zip) [optional]
+  - a file with elevations (format:  .tif) [optional]  
+  
+In this iteration, the target directory holds an osm.pbf document, cropped from all of NZ to just the Bay of Plenty region and a [public transport network](https://www.baybus.co.nz/assets/GTFS/boprc-nz-rits-6-1.zip) file that describes services in the area.  
+      
+```{r bopCore}
+crop_data_path <- "C:/Users/chad/projects/DATA581/Travel-to-education/crop_osm"
+
+# allocate 16G
+options(java.parameters = "-Xmx16G")
+library(r5r)
+
+# call setup_r5, no gtfs, no tif
+bop_core <- r5r::setup_r5(data_path = crop_data_path,
+                          elevation = 'NONE',
+                          overwrite = TRUE)
+
+```
+
+The previous chunk sets the memory level for java, loads the r5r library and then sets up an r5r core as a multi-modal traffic network, within a network.dat file.  The original data path points to a directory holding an OpenStreetMap and a public transport network feed (gtsf.zip).  
+
+The chunk creates a core that will be used in subsequent chunks.
+
+The network is successfully established, producing additional files in the target directory:  
+
+  - an osm.pbf.mapdb file
+  - an osm.pbf.mapdb.p file
+  - a network_settings.json file
+  - a network.dat file
+  
+These files are retained in the target directory and future installations will simply read the network.dat file rather than reload.  To complete a full re-installation of the network (e.g. if network features are changed or updated), then in the r5r::setup_r5() call, the user can include the argument 'overwrite = TRUE' and this will create a new network.dat file.
+  
+
+# 2 establish points of interest (school locations)  
+
+The isochrones function determines the boundaries around an origin that can be reached within a given travel time, so in this step we retrieve some origin points in the form of geographic locations of schools in New Zealand.  This demo uses a smaller dataset so after retrieving the locations of all schools, create a smaller subset for schools within the Bay of Plenty region.  
+
+```{r retrieveSchooldataFromDataGovtNz}
+# let's try the isochrone tutorial now!!!
+# tutorial requires lots of memory for java, so change options before calling library
+library(sf)
+#library(data.table)
+library(ggplot2)
+library(interp) 
+library(tidytransit)
+library(httr)
+
+# retrieve schools dataset from data.govt.nz, there are around 2500 schools, 
+# so limit to 3000
+
+qry <- paste('https://catalogue.data.govt.nz/api/3/action/datastore_search?resource_id=4b292323-9fcc-41f8-814b-3c7b19cf14b3&limit=3000')
+#schools <- httr::GET(qry) 
+
+school_data <- jsonlite::fromJSON(qry)$result$records %>%
+  dplyr::select(School_Id, Org_Name, Territorial_Authority, Regional_Council, 
+         Statistical_Area_2_Code, Statistical_Area_2_Description, 
+         Latitude, Longitude, Total, Isolation_Index) %>%
+  dplyr::rename(id = School_Id,
+                lat = Latitude,
+                lon = Longitude) 
+
+# the demo reads in points, we can subset the school_data for bop region
+bop_schools <- school_data %>% 
+  dplyr::filter(Regional_Council=="Bay of Plenty Region")
+```
+
+School locations are successfully saved in the school_data object and with the subset of schools in the Bay of Plenty region saved in the bop_schools object.
+
+Before moving on to the next step, let's just check out what the school data looks like on a map
+
+```{r plotBOPSchools}
+# first, let's see which schools these are
+library(leaflet)
+
+# plot a leaflet object
+leaflet(bop_schools) %>%
+  setView(176.8, -38, zoom =9) %>%
+  addTiles() %>%
+  addTiles(group = "OSM (default)") %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  addCircleMarkers(lng = ~bop_schools$lon,
+                   lat = ~bop_schools$lat, 
+                   popup = paste0(bop_schools$id, 
+                                  bop_schools$Org_Name,
+                                  sep = '\n') 
+                ) %>%
+  addMiniMap("topright") %>%
+  mapOptions() %>%
+  addMeasure() %>%
+  addScaleBar()
+```
+
+The bop_schools data shows predictably high concentrations of schools in urban areas (e.g. around Tauranga City, Mount Maunganui, Rotorua, Whakatane, Kawerau and Opotiki) with comparatively sparse distribution in rural areas.  The leaflet map allows users to zoom and pan (in html formats), and this particular output allows users to identify each school by clicking on the circle marker.
+
+# 3. establish the isocrhones/polygons  
+
+The isochrones function requires a multi-modal network (i.e. a core), origins and network parameters that define modes of travel, cut off times and distances, average speeds of travel etc.  
+
+For this demo, the key parameters are:  
+
+  - time intervals (minutes): 0, 10, 20, 30, 40
+  - mode of travel: walking
+  - maximum duration of trip (minutes): 40
+  - departure date and time:  12 March 2024, 07:30 am
+  
+The isochrone function estimates the boundaries by taking assuming a journey each minute for the time_window and taking the median result.  The function uses information in the multi-modal network core to modify travel distance (e.g. public transport pickups and stops, average walking speed, average driving speed etc.).
+
+
+```{r bopSchoolsIsochrones}
+## isochrone parameters
+# isochrone intervals
+time_intervals <- c(0, 10, 20, 30, 40)
+
+# routing inputs
+# mode - use only WALK or BICYCLE, not both; use only CAR or WALK
+mode <- c('WALK', 'TRANSIT') #'CAR', 'TRANSIT')
+max_walk_time <-40  # minutes
+max_car_time <- 30 # minutes
+max_trip_duration <- 40 # minutes
+time_window <- 120 # minutes
+departure_datetime <- as.POSIXct("12-03-2024 07:30:00",
+                                 format = "%d-%m-%Y %H:%M:%S")
+
+# try to plot some of the points
+# bop <- sf::st_read(paste0(crop_data_path, "/bop.osm.pbf"))
+# plot(bop$geometry)
+
+# calculate travel time matrix
+tryCatch(
+  {iso_bop <- r5r::isochrone(bop_core, 
+                          origins = bop_schools, 
+                          mode = mode, 
+                          cutoffs = time_intervals,
+                          sample_size = .7,
+                          max_car_time = max_car_time,
+                          departure_datetime = departure_datetime,
+                          max_walk_time = max_walk_time,
+                          max_trip_duration = max_trip_duration,
+                          time_window = time_window,
+                          progress = TRUE, 
+                          max_rides = 5,
+                          max_lts = 3,
+                          #polygon_output = FALSE
+                          )},
+  
+    warning = function(w){
+    print(w)},
+  error = function(e){
+    print(e)},
+  finally = print('isochrone function completed, if successful, an isochrone object has been created')
+)
+                          
+
+# r5r_sitrep()
+# bop_core@jobj
+# stop the core because everything is done... actually, the core is probably too big
+# r5r::stop_r5(bop_core)
+```
+
+The full set of Bay of Plenty schools fails to run with multiple locations reporting that the origins are likely located in areas where the road density is too low to create proper isochrone polygons, so we will reduce the dataset to just one origin school:  Mount Maunganui College
+
+Keeping all other parameters the same, we reduce the origins argument to include only the location of 'Mount Maunganui College'
+
+```{r MtCollegeParams}
+# find Mt college first
+target_school <- bop_schools[bop_schools$Org_Name=="Mount Maunganui College",]
+
+
+# calculate travel time matrix for mt college
+iso_mtcoll <- r5r::isochrone(bop_core, 
+                          origins = target_school, 
+                          mode = mode, 
+                          cutoffs = time_intervals,
+                          sample_size = .65,
+                          max_car_time = max_car_time,
+                          departure_datetime = departure_datetime,
+                          max_walk_time = max_walk_time,
+                          max_trip_duration = max_trip_duration,
+                          time_window = time_window,
+                          progress = TRUE, 
+                          max_rides = 5,
+                          max_lts = 3,
+                          #polygon_output = FALSE
+                          )
+```
+
+The isochrone function successfuly creates an object that holds polygons showing the boundaries for travel times around the target school: Mount Maunganui College and these can be easily visualised.
+
+
+# 4 visualise the results as a plot
+
+This demo will use a range of plotting tools to visualise the isochromes:  
+  
+  - leaflet
+  - ggplot2
+  - base plot
+  
+Since isochrones represent boundaries around an origin, they are best visualised as the boundary lines and can be filled to accentuate the particular boundary.  
+
+## visualising isochrones using leaflet  
+
+The leaflet package provides developers with a range of plotting and visualisation tools that are both customisable and highly interactive in html environments.  While the isochrones can be simply visualised as lines, the addition of fill color and line color help the reader to better recognise those boundaries. 
+
+leaflet creates interactive maps allowing users to zoom and pan to different points of interest.
+
+
+```{r MtCollegeleaflet, include = TRUE, fig.cap='Visualising r5r isochrones using leaflet'}
+# function to generate color for length of travel
+mtcoll_palette <- leaflet::colorQuantile("inferno",
+                                         domain = NULL,
+                                        probs = time_intervals/max(time_intervals), 
+                                        na.color = NA)
+mt_coll_col <- c('green', 'yellow', 'blue', 'red')
+# mt_coll_col <- c('orange', 'white', 'white',  'white', 'white', 'white')
+
+# plot(iso_mtcoll)
+leaflet(iso_mtcoll)%>%
+  addTiles() %>%
+  addTiles(group = "OSM (default)") %>%
+  addProviderTiles(providers$OpenStreetMap)  %>%
+  addPolygons(color = rev(mt_coll_col),
+              fillColor = rev(mt_coll_col),
+              fillOpacity = 0.2,
+              popup = paste(iso_mtcoll$isochrone, 'minutes')) %>%
+  addCircleMarkers(lng = ~target_school$lon,
+                   lat = ~target_school$lat, 
+                   color = 'black') %>%
+  addMiniMap('topright') %>%
+  addScaleBar()
+
+# r5r::stop_r5(bop_core)
+# r5r::stop_r5()
+
+```
+
+## visualising isochrones using ggplot2
+
+The ggplot2 package can also handle geospatial data so we can generate a similar visualisation with ggplot2.  
+
+```{r MtCollegeGgplot, include = T, fig.cap='Visualising isochrones with ggplot2'}
+library(ggplot2)
+library(interp)
+# street_network <- street_network_to_sf(bop_core)
+# main_roads <- subset(street_network$edges,
+#                      street_class %in% c('PRIMARY', 'SECONDARY'))
+
+ggplot() +
+  geom_sf(data = iso_mtcoll,
+          aes(fill = factor(isochrone)),
+          color = NA,
+          alpha = 0.7) +
+  # geom_sf(data = main_roads,
+  #         color = 'gray55',
+  #         size = 0.01,
+  #         alpha = 0.2) +
+  geom_point(data = target_school,
+             aes(x = lon,
+                 y = lat,
+                 color = 'Mt Maunganui College')) +
+  scale_fill_manual(values = mt_coll_col)+
+  labs(title = 'Isochrones: Mt Maunganui College',
+       fill = 'Travel time (min)', color='')
+
+```
+
+We can add additional layers using ggplot (each plot roads, buildings, features etc.), but for the purposes of this demo, we can see that the isochrones plot easily in ggplot... the leaflet output is 'prettier'.
+
+
+# Expanding the number of schools with isochrones  
+
+Having successfully generated isochrones with a single target school, now try with additional schools.  The school_data set can be filtered by Regional Council (so far, filtered to 'Bay of Plenty') and then further, by Territorial Authority.  The Bay of Plenty schools are separated into seven Territorial Authorities:  
+
+  `r paste(unique(bop_schools$Territorial_Authority), sep = "\n")`
+  
+At this stage, try using the schools within Tauranga City.  Again, we identify the relevant schools, determine their geographic locations, estimate the isochrones using the same parameters and then plot he results.
+
+```{r taurangaCitySchools}
+# # subset the schools in Tauranga City
+
+sa2 <- c("Tauranga South")
+# tga_schools <- bop_schools[bop_schools$Territorial_Authority=="Tauranga City",] %>%
+#   dplyr::filter(Statistical_Area_2_Description == sa2 )
+
+tga_schools <- bop_schools[bop_schools$Statistical_Area_2_Description == sa2,] 
+
+
+# subset the schools in Tauranga City
+# beth_school <- bop_schools[bop_schools$Org_Name=="Bethlehem School",]
+
+# calculate travel time matrix for mt college
+iso_tga_schools <- r5r::isochrone(bop_core, 
+                          origins = tga_schools, 
+                          mode = mode, 
+                          cutoffs = time_intervals,
+                          sample_size = .6,
+                          max_car_time = max_car_time,
+                          departure_datetime = departure_datetime,
+                          max_walk_time = max_walk_time,
+                          max_trip_duration = max_trip_duration,
+                          time_window = time_window,
+                          progress = TRUE, 
+                          max_rides = 5,
+                          max_lts = 3,
+                          #polygon_output = FALSE
+                          )
+
+```
+Visualise the output for schools in the SA2 "Tauranga South".
+
+```{r OmanuBeachleaflet, include = TRUE, fig.cap='Visualising r5r isochrones using leaflet: SA2 = Tauranga South'}
+# function to generate color for length of travel
+# tga_id_palette <- leaflet::colorFactor("inferno",
+#                                         domain = NULL,
+#                                         levels = factor(iso_tga_schools$id),
+#                                         na.color = NA)
+mt_coll_col <- c('red', 'yellow', 'blue') #, 'red')
+# mt_coll_col <- c('orange', 'white', 'white',  'white', 'white', 'white')
+
+
+# plot(iso_mtcoll)
+leaflet(iso_tga_schools)%>%
+  addTiles() %>%
+  addTiles(group = "OSM (default)") %>%
+  addProviderTiles(providers$OpenStreetMap)  %>%
+  addPolygons(color = rev(mt_coll_col),
+              fillColor = rev(mt_coll_col),
+              # fillOpacity = 0.2,
+              popup = paste(iso_tga_schools$isochrone, 'minutes')) %>%
+  addCircleMarkers(lng = ~tga_schools$lon,
+                   lat = ~tga_schools$lat, 
+                   color = 'black') %>%
+  addMiniMap('topright') %>%
+  addScaleBar()
+
+# r5r::stop_r5(bop_core)
+# r5r::stop_r5()
+
+```
+
+
+... oooooohhh, it gets a bit hard to interpret as the plot is very busy where isochrones overlap between schools
+
+
+# Using the New Zealand map, without Chatham Islands  
+
+So it's possible to generate a set of isochrones for an individual school and for a small number of schools, using the smaller Bay of Plenty sized OpenStreetMap map.  One of the key issues with the full OpenStreetMaps NZ map, is that the bounding box is drawn from left to right with the planet projected as a rectangle starting with -180 on the left and increasing to 180 degrees on the right.  This means that the Chatham Islands is plotted on the far left side of the map and the remainder of New Zealand is plotted nearly 350 degrees to the right, rather than just a few degrees to the left.  The underlying R5 engine has area size limits preventing ingestion of maps that size, so cropping the full sized map to remove the Chatham Islands, or more accurately, limiting the bounding box between 165 and 179.5 degrees may help manage the size issue.
+
+Again, the New Zealand map is cropped using osmium in the command line and a new r5r core is generated.
+
+```{r noChathamsCore}
+# path to no Chathams Islands file
+no_chatham_path <- "C:/Users/chad/projects/DATA581/Travel-to-education/nz_crop"
+
+# allocate 16G
+options(java.parameters = "-Xmx16G")
+library(r5r)
+
+# call setup_r5, no gtfs, no tif
+no_chat_core <- r5r::setup_r5(data_path = no_chatham_path,
+                          elevation = 'NONE',
+                          overwrite = TRUE, 
+                          verbose = TRUE)
+```
+
+The dataset is still too big, so try setting up regional sets by identifying the boundary boxes of each region
+
+```{r statsNZShapeFilepaths}
+if(!file.exists('statistical_areas.csv')){
+  if (!exists('statistical_areas')){
+    
+    ### ensure all csv files are in the same folder and then update folder path here: ###
+    sa_folder<- c("C:/Users/chad/Downloads/")
+    
+    
+    # read in each csv file
+    sa1_to_sa2 <- read.csv(
+      paste(sa_folder, "SA1 to SA2 2023.csv", sep = ""),
+        skip = 7, header = F)
+    sa1_to_sa2 <- sa1_to_sa2[, c(1,4, 5)]
+    colnames(sa1_to_sa2) <- c("SA1", "SA2", "SA2_chx")
+    
+    sa1_to_sa3 <- read.csv(
+      paste(sa_folder, "SA1 to SA3 2023.csv", sep = ""),
+        skip = 7, header = F)
+    sa1_to_sa3 <- sa1_to_sa3[, c(1,4, 5)]
+    colnames(sa1_to_sa3) <- c("SA1", "SA3", "SA3_chx")
+    
+    sa1_to_rc <- read.csv(
+      paste(sa_folder, "SA1 to RC.csv", sep = ""),
+        skip = 7, header = F)
+    sa1_to_rc <- sa1_to_rc[, c(1, 5)]
+    colnames(sa1_to_rc) <- c("SA1", "Regional Council")
+    
+    sa2_to_ta <- read.csv(
+      paste(sa_folder, "SA2 to TA 2023.csv", sep = ""),
+        skip = 7, header = F)
+    sa2_to_ta <- sa2_to_ta[, c(1, 5)]
+    colnames(sa2_to_ta) <- c("SA2", "Territorial Authority")
+    
+    
+    # consolidate into a single object
+    statistical_areas <- sa1_to_sa2 %>%
+      left_join(sa1_to_sa3, by = "SA1") %>%
+      left_join(sa1_to_rc, by = "SA1") %>%
+      left_join(sa2_to_ta, by = "SA2")
+    
+    # tidy up workspace
+    rm(list = c('sa1_to_sa2', 'sa1_to_sa3', 'sa1_to_rc', 'sa2_to_ta'))
+  }
+  write.csv(statistical_areas, 'statistical_areas.csv')
+  rm(sa_folder)
+} else {
+  # read in from the csv file generated in long version
+  stat_areas <- read.csv('statistical_areas.csv', row.names = 'X')
+}
+
+```
+
+
+```{r readInStatsNZShapeFilePaths}
+if (!exists('shp_sa1')){
+  # shapefiles are available from StatsNZ Geographic Data Service at: 
+  # https://datafinder.stats.govt.nz/ 
+  shp_folder <-  c("C:/Users/chad/OneDrive - Victoria University of Wellington - STUDENT/DATA581 - waka kotahi/StatsNZShapeFiles/")
+  shp_sa1 <- paste0(shp_folder, "statistical-area-1-2023-generalised.shp", sep = "")
+  shp_sa2 <- paste0(shp_folder, "statistical-area-2-2023-generalised.shp", sep = "")
+  shp_sa3 <- paste0(shp_folder, "statistical-area-3-2023-clipped-generalised.shp", sep = "")
+  shp_ta <- paste0(shp_folder, "territorial-authority-2023-clipped-generalised.shp", sep = "")
+  shp_rc <- paste0(shp_folder, "regional-council-2023-clipped-generalised.shp", sep = "")
+  shp_ur <- paste0(shp_folder, "urban-rural-2023-generalised.shp", sep = "")
+}
+
+
+```
+
+
+
+
+```{r cleanUp}
+r5r::stop_r5()
+rJava::.jgc(R.gc = TRUE)
+```
+
+
