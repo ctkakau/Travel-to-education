@@ -1,0 +1,66 @@
+---
+title: "TravToEd_queries"
+author: 'Chad Kakau: 300212228'
+date: "2024-12-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, include = F)
+library(rJava)
+library(jsonlite)
+```
+
+Use this document to retrieve census data from the Aotearoa Data Explorer site and import for analysis without downloading a file.  General process:  
+
+1. identify key datasets
+2. generate api query
+3. retrieve and reshape data
+4. conduct analysis
+5. generate a couple of outputs.
+
+## 1. identify key datasets  
+
+Key datasets will be the travel to education responses from the 2018 and 2023 census years.  Try to import at a range of levels, summarised at SA1, SA2, SA3, Territorial Authority, Regional Council, and Urban/Rural.
+
+### determine data availability  
+
+Create a query to identify whether data is available in the database.  To request data availability, users must provide the following elements:  
+
+  - context:
+  - agencyId:
+  - resourceId:
+  - version:
+  - key:
+  - componentId:
+  
+Users can also provide optional information for:  
+
+  - mode:
+  - references:
+
+```{r q_dataAvailability}
+library(httr)
+# url <- "https://apis.stats.govt.nz/ade-api/rest/dataflow/STATSNZ/CEN23_TRA_001/1.0?references=all&detail=full_HTTP/1.1"
+url <- 'http://httpbin.org/get'
+GET(url)
+
+# first <- GET(url,
+#              add_headers(accept-encoding = 'identity',
+#                          Ocp-Apim-Subscription-Key = 'c5bc404c96814e9989910726559ee843')
+#              )
+# 
+# school_data <- jsonlite::fromJSON(qry)
+
+```
+
+
+### travel to education summarised at Regional Council level 
+
+This dataset will include data summarised at the Regional Council level and should therefor contain 17 rows.
+
+```{r q_RC}
+
+
+```
+
