@@ -7,11 +7,21 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = F, warning = F, include = F)
-library(rJava)
-library(jsonlite)
+authKey <- "5dc60d5341c3446690edc70c8bdf67ab"
 ```
 
-Use this document to retrieve census data from the Aotearoa Data Explorer site and import for analysis without downloading a file.  General process:  
+
+Use this document to retrieve census data from the Aotearoa Data Explorer site and import for analysis without downloading a file.  The Aotearoa Data Explorer API page provides for a range of query types, for retrieving data we will use:  
+
+  - GET data queries, or
+  - GET data by the key
+  
+There are other queries that could be used for creating an interface that allows users to select their own filters and outputs:  
+
+  - GET Data availability
+  - GET information about data availability
+  
+# General process:  
 
 1. identify key datasets
 2. generate api query
@@ -24,6 +34,50 @@ Use this document to retrieve census data from the Aotearoa Data Explorer site a
 Key datasets will be the travel to education responses from the 2018 and 2023 census years.  Try to import at a range of levels, summarised at SA1, SA2, SA3, Territorial Authority, Regional Council, and Urban/Rural.
 
 ### determine data availability  
+
+We can first use the GET Data availability function to determine relevant data keys.  
+
+```{r getDataAvailability}
+# check availability for data from the Census 2023 Transport concept.  The GET Data availability query has the format:
+# GET https://apis.stats.govt.nz/ade-api/rest/v2/availability/{context}/{agencyId}/{resourceId}/{version}/{key}/{componentId}
+library(httr2)
+library(xml2)
+
+context <- 'dataflow'
+agencyId <- 'STATSNZ'
+resourceId <- 'CEN23_TRA_001'
+version <- '1.0'
+key <- '2023'
+componentId <- 'CEN23_YEAR_001,CEN23_TED_002,CEN23_AGE_003,CEN23_GEN_002'
+# ,CEN23_EDU_001
+
+data_avail <- request('https://apis.stats.govt.nz/ade-api/rest/v2/availability') %>%
+  req_url_path_append(context) %>%
+  req_url_path_append(agencyId) %>%
+  req_url_path_append(resourceId) %>%
+  req_url_path_append(version) %>%
+  req_url_path_append(key) %>%
+  req_url_path_append(componentId) %>%
+  req_headers(
+    `Ocp-Apim-Subscription-Key`=authKey,
+    `Cache-Control` = 'no-cache',
+    `accept-encoding` = 'identity'
+  ) %>%
+  req_url_query(
+    mode = 'available',
+    format = 'jsondata' # this doesn't have an effect, comes back as xml
+  ) %>%
+  req_perform() 
+
+available_data <- data_avail %>%
+  resp_body_xml() %>%
+  xmlTreeParse(asText=T) %>%
+# follow Albert Rapp's approach using purrr::pluck to dig into nested list
+# plucked <- available_data |>
+  pluck("doc", 1, "Structures", "Constraints", "ContentConstraint", "CubeRegion")
+
+```
+
 
 Create a query to identify whether data is available in the database.  To request data availability, users must provide the following elements:  
 
@@ -39,28 +93,131 @@ Users can also provide optional information for:
   - mode:
   - references:
 
-```{r q_dataAvailability}
-library(httr)
-# url <- "https://apis.stats.govt.nz/ade-api/rest/dataflow/STATSNZ/CEN23_TRA_001/1.0?references=all&detail=full_HTTP/1.1"
-url <- 'http://httpbin.org/get'
-GET(url)
+the 'GET data query' retrieves the same response as the test function on Aotearoa Data Explorer API test page, but it doesn't show the data
 
-# first <- GET(url,
-#              add_headers(accept-encoding = 'identity',
-#                          Ocp-Apim-Subscription-Key = 'c5bc404c96814e9989910726559ee843')
-#              )
-# 
-# school_data <- jsonlite::fromJSON(qry)
 
+# __'GET data by key'__ query
+
+```{r q_getDataByKey}
+# get data by the key
+# 'http://apis.stats/govt.nz/ade-api/rest/data'/{flowRef}/{key}[?dimenstionAtObservation][&detail][&includeHistory]
+flowRef <- 'STATSNZ,CEN23_TRA_001,1.0'
+key <- "2018+2023.9999.010+009+008+007+006+005+004+003+002+001.99.99"
+
+gdbk <- request('http://apis.stats.govt.nz/ade-api/rest/data') %>% 
+  req_url_path_append(flowRef) %>% # add {key}
+  req_url_path_append(key) %>% # add headers 
+  req_headers(
+    `Ocp-Apim-Subscription-Key` = authKey,
+    `Cache-Control` = 'no-cache',
+    `accept-encoding` = 'identity') %>% #perform query
+  req_url_query(
+    format = 'jsondata',
+    detail = "full"
+  )
+
+req_dry_run(gdbk)
+
+gdbk_resp <- req_perform(gdbk)
+
+gdbk_data <- gdbk_resp %>%
+  resp_body_json() 
+# plucked <- available_data |>
+
+glimpse(gdbk_data)
+
+map_dfr(gdbk_data,
+    \(x) {
+      tibble(
+        something = x |> pluck( "data", "dataSets", 1, "observations")
+      )
+})
+
+str(pluck(gdbk_data, "data"), max.level = 2)
+str(pluck(gdbk_data, "data", "dataSets"), max.level = 2)
+
+# values, indexed by keyPosition
+# 0:0:1:0:0 > 2018, ed inst (tot), 2nd travel method, age (tot), gender (tot)
+str(pluck(gdbk_data, "data", "dataSets", 1, "observations"),max.level =2)
+
+summin <- pluck(gdbk_data, "data", "dataSets", 1, "observations") |>
+  glimpse()|>
+  map_dfr(
+        \(x) {
+          tibble(
+            something = x |> pluck(1, 1)
+          )
+        })
+
+table(summin)
+
+
+str(pluck(gdbk_data, "data", "structures", 1, "dimensions"), max.level = 2)
+
+# column names within each of list of five > List of 6 > name and keyPosition
+str(pluck(gdbk_data, "data", "structures", 1, "dimensions", "observation"), max.level = 2)
 ```
 
 
-### travel to education summarised at Regional Council level 
 
-This dataset will include data summarised at the Regional Council level and should therefor contain 17 rows.
+```{r dataByKeyCSV}
 
-```{r q_RC}
+gdbk_csv <- request('http://apis.stats.govt.nz/ade-api/rest/data') %>% 
+  req_url_path_append(flowRef) %>% # add {key}
+  req_url_path_append(key) %>% # add headers 
+  req_headers(
+    `Ocp-Apim-Subscription-Key` = authKey,
+    `Cache-Control` = 'no-cache',
+    `accept-encoding` = 'identity') %>% #perform query
+  req_url_query(
+    format = "csv",
+    detail = "full"
+  )
 
-
+gdbk_csv_resp <- req_perform(gdbk_csv)
+resp_ (gdbk_csv_resp)
+  
 ```
+
+Well, what does this tell us?  
+
+1. we can retrieve data from API-ADE and it comes back in xml format
+2. for the query we ran, we can break the results out, but it takes a bit of work
+3. we have a better understanding of the structure of the data:  
+  - we can start decoding the key `r URLdecode(key)` 
+  - '2018+2023' are the key values for year (Value id="CEN23_YEAR_001")
+  - '9999' is key value for something CEN23_EDU_001 (is this total by educational institute address)
+  - '7777' is key value for total education institute address by regional council
+  - '999' is key value for 'total travel to education' (Value id = 'CEN23_TED_002')
+  - three digit indicators are key values for each means of travel to education
+  - '99' are key values for 'total gender' and 'total age groups'
+  
+
+
+## what about just downloading csv and making contingency table
+
+```{r csvYear}
+# read in the csv table
+ted_year <- read.csv("/home/chad/Downloads/STATSNZ,CEN23_TRA_001,1.0+2018+2023.9999.010+009+008+007+006+005+004+003+002+001.99.99 (1).csv") |>
+  select(OBS_VALUE,
+         !c(contains("_"),
+            ends_with(c(".Value", ".Status")),
+           STRUCTURE,
+           ACTION,
+           )
+         ) #|>
+  
+year_glm_f <- glm(OBS_VALUE~factor(Census.year), 
+    data=  ted_year,
+    family = 'poisson')
+1-(pchisq(year_glm_f$deviance, year_glm_f$df.residual))
+
+year_glm <- glm(OBS_VALUE~Census.year, 
+    data=  ted_year,
+    family = 'poisson')
+
+summary(year_glm_f)
+summary(year_glm)
+```
+
 
