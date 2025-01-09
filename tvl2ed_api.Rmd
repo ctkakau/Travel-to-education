@@ -8,6 +8,9 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = F, warning = F, include = F, message = F)
 authKey <- "5dc60d5341c3446690edc70c8bdf67ab"
+shapeKey <- "92c010068afb47089f76501613231717" #TED23
+# territorial authority shapefile data
+# https://datafinder.stats.govt.nz/services/query/v1/vector.json?key=92c010068afb47089f76501613231717&layer=111194&x=[x]&y=[y]&max_results=3&radius=10000&geometry=true&with_field_names=true
 ```
 
 
@@ -33,11 +36,9 @@ There are other queries that could be used for creating an interface that allows
 
 Key datasets will be the travel to education responses from the 2018 and 2023 census years.  Try to import at a range of levels, summarised at SA1, SA2, SA3, Territorial Authority, Regional Council, and Urban/Rural.
 
-### determine data availability  
+### GET information about data availability  
 
-We can first use the GET Data availability function to determine relevant data keys.  
-
-The data set is available from Statistics New Zealand (agency ID: STATSNZ) and the "travel to education" data is part of the resource ID: CEN23_TRA_001 (the 'transport' concept within the census 2023 data).  To give helpful context to the "travel to education" additional dimensions, or "components" are defined and each component includes individual levels (e.g. "walk or jog", "bicycle", etc.) and aggregations (e.g. "total", "median"):    
+We can first use the "httr2" package to access the Aotearoa Data Explorer API and call the "GET information about Data availability" query to determine relevant data keys.  The data set is available from Statistics New Zealand (agency ID: STATSNZ) and the "travel to education" data is part of the resource ID: CEN23_TRA_001 (the 'transport' concept within the census 2023 data).  To give helpful context to the "travel to education" data, additional dimensions, or "components" are defined and each component includes individual levels (e.g. "walk or jog", "bicycle", etc.) and aggregations (e.g. "total", "median").  The key dimensions relating to the "travel to education" concept are:    
 
   - CEN23_YEAR_001: census year
   - CEN23_TED_002: main means of travel
@@ -45,11 +46,16 @@ The data set is available from Statistics New Zealand (agency ID: STATSNZ) and t
   - CEN23_GEN_002: gender category
   - CEN23_EDU_001: location by educational institution address  
 
-For this initial example, we will make a "GET data availability by key" request to the Aotearoa Data Explorer API.  The request takes the form:
+For this initial example, we will make a "GET information about data availability" request to the Aotearoa Data Explorer API.  The request takes the form:
 
-  - GET https://apis.stats.govt.nz/ade-api/rest/v2/availability/{context}/{agencyId}/{resourceId}/{version}/{key}/{componentId}  
+  - GET "https://apis.stats.govt.nz/ade-api/rest/availableconstraint/{flowRef}/{key}"  
 
 with the following parameter values:  
+
+  - flowRef: "STATSNZ,CEN23_TRA_001,1.0
+  - key: "2023
+
+Parameters for other queries could include:  
 
   - context: "dataflow"
   - agencyId: "STATSNZ"
@@ -60,7 +66,7 @@ with the following parameter values:
 
 The Aotearoa Date Explorer API requires other information, including authentication and output format, so these are included when constructing the request.
 
-```{r getDataAvailability_request, echo=T, include=T}
+```{r getDataBaseElements}
 # check availability for data from the Census 2023 Transport concept.  The GET Data availability query has the format:
 # GET https://apis.stats.govt.nz/ade-api/rest/v2/availability/{context}/{agencyId}/{resourceId}/{version}/{key}/{componentId}
 library(httr2) # interact with api
@@ -83,59 +89,7 @@ base_path <- request("https://apis.stats.govt.nz/ade-api/rest") %>%
     `Cache-Control` = 'no-cache',
     `accept-encoding` = 'identity'
   ) 
-
-data_avail_req <- base_path %>%
-  req_url_path_append("v2") %>%
-  req_url_path_append("availability") %>%
-  req_url_path_append(context) %>%
-  req_url_path_append(agencyId) %>%
-  req_url_path_append(resourceId) %>%
-  req_url_path_append(version) %>%
-  req_url_path_append(key) %>%
-  req_url_path_append(componentId) %>%
-  req_url_query(
-    mode = 'available',
-    format = 'xml'
-  )
-
-# this is what the request will look like
-req_dry_run(data_avail_req)
 ```
-
-The "GET data availability by key" request has been constructed and can be sent to the Aotearoa Data Explorer API.
-
-```{r getDataAvailability_response, echo=T, include = T}
-data_avail_resp <- req_perform(data_avail_req) 
-
-available_data <- data_avail_resp %>%
-  resp_body_xml() %>%
-  # xml_attrs()
-  xmlTreeParse(asText=T) %>%
-# follow Albert Rapp's approach using purrr::pluck to dig into nested list
-# plucked <- available_data |>
-  pluck("doc", 1, "Structures", "Constraints", "ContentConstraint", "CubeRegion")
-
-# available keys within each category
-xmlSApply(pluck(available_data), xmlValue)
-# available years for CEN23_YEAR_001
-xmlSApply(pluck(available_data,1), xmlValue)
-# available modes and summaries for CEN23_TED_002
-xmlSApply(pluck(available_data,2), xmlValue)
-# available  age groupings for CEN23_AGE_003
-xmlSApply(pluck(available_data,3), xmlValue)
-# available gender groupings for CEN23_GEN_002
-xmlSApply(pluck(available_data,4), xmlValue)
-
-close(data_avail_resp)
-```
-
-### __GET info about data availability__ query  
-
-Retrieve decodes for different levels of each dimension using the form:  
-
-  - GET "https://apis.stats.govt.nz/ade-api/rest/availableconstraint/{flowRef}/{key}"  
-
-And then use these decodes to add meaningful names to each level.
 
 ```{r getDataInfo_req}
 # GET "https://apis.stats.govt.nz/ade-api/rest/availableconstraint/{flowRef}/{key}"
@@ -150,140 +104,79 @@ data_info_req <- base_path |>
   req_url_query(
     mode = "exact",
     references = "codelist")
-  
+```
+
+Using the "httr2" package in R we can construct and preview the request to check the structure and then send the request to the server. 
+
+```{r getDataInfo_resp, include=T}
+# preview the request
 req_dry_run(data_info_req)
-```
 
-```{r getDataInfo_resp}
-
+# perform request
 data_info_resp <- req_perform(data_info_req) 
-
 ```
+
+We need to extract the relevant information from the response and can draw on the "xml2" package to handle the response.  Since we are interested in identifying the relevant levels within each dimension we extract the name of each dimension (e.g. year, Age etc.) and the name and numeric code for each level within the dimension.  We can use the codes to build more focussed queries and to organise data in the responses.  
+
 
 ```{r getDataInfo}
+# convert the response to nested list
 data_info_base <- data_info_resp |>
   resp_body_xml() |>
   as_list()
-  
-close(data_info_resp)  
+```
 
+Using the "purrr" package within R, we can extract the relevant information and construct objects for holding the information.
+
+```{r getDataInfoDimTables}
+# retrieve Travel to Education dimension names
 TED_dims <- data_info_base |>
   pluck(1, "Structures", "Codelists") |>
   map_dfr(
     \(x) {
       tibble(
-        dimension = x |>  pluck(1, 1, 1)
+        CL =  x |> attr("id") |> strsplit(split = "CL_") |> pluck(1, 2),  
+        dimension = x |>  pluck("Name", 1)
       )    
       }
   ) 
-TED_dims
 
-# str(data_info_base$Structure, max.level= 3)
-
-tibb <- pluck(data_info_base,
-      # 1, "Structures", "Codelists", "Codelist", 4, "Name", 1
-      "Structure", "Structures", "Codelists"
-      #, "Codelist", "Code", "Name", 1
-      # "Code", "Name", 1 accesses individual code value (e.g. "15-29 years")
-      # "Name" gives dimension name (e.g. "Age")
-      ) |>
-  map_dfr(
-    \(x) {
-      tibble(
-        value = x |> 
-          pluck(1, "Code",
-            #"Codelist", "Code", "Name", 1
-            ) 
-          )
-    }
-  ) #|>
-  #pluck("Code", "Name") |>
-
-```
-
-
-
-
-### __GET data structures__ query  
-
-The "GET data structures" query allows a user to retrieve the structure of data within Aotearoa Data Explorer API, and takes the form:  
-
-  - "GET http://apis.stats.govt.nz/ade-api/rest/{structure}/{agencyId}/{resourceId}[?references][&detail]"  
-
-For the "travel to education" data, the relevant parameters are:  
-
-  - structure: "dataflow"
-  - agencyId: "STATSNZ"
-  - resourceId: "CEN23_TRA_001" 
-
-The query can be constructed for sending.  
-
-```{r getDataStructures_req, echo=T, include=T}
-# format:  "GET http://apis.stats.govt.nz/ade-api/rest/{structure}/{agencyId}/{resourceId}[?references][&detail]"
-library(httr2)
-library(xml2)
-library(dplyr)
-library(purrr)
-
-# query components
-structure <- "dataflow"
-agencyId <- "STATSNZ"
-resourceId <- "CEN23_TRA_001"
-# construct data queries
-data_structure_req <- base_path |>
-  req_url_path_append(structure) |>
-  req_url_path_append(agencyId) |>
-  req_url_path_append(resourceId) |>
-  req_url_query(
-    references = "none",
-    detail = "allcompletestubs"
-  ) |>
-  req_headers(
-    format = "xml"
+str(data_info_base$Structure$Structures$Codelists$Codelist, max.level=4)[[1]]
+data_info_base$Structure$Structures$Codelists$Codelist |>
+  list(
+  pluck("Code") #$Code$Annotations$Annotation$AnnotationText
   )
+# extract code and decodes for levels in Travel to Education dimensions
+TED_tables <- map(data_info_base$Structure$Structures$Codelists,
+                 \(x) {
+                   map_dfr(x,
+                           \(y) {
+                             list(
+                               description = y |> pluck("Name", 1),
+                               long_code = y |>  attr("id")
+                             )
+                           }
+                   )
+                 }
+)
+                            
+# rename tables to dimensions
+names(TED_tables) <- TED_dims$dimension
 
-req_dry_run(data_structure_req)
+# close the response and remove the object
+close(data_info_resp)
+# tidy environment by removing unnecessary objects
+rm(list = c("data_info_req", "data_info_resp", "data_info_base"))
 ```
 
-```{r getDataStructures_resp, echo=T, include=T}
-data_structure_resp <- req_perform(data_structure_req) 
+We can preview the decoded Travel to Education levels within each dimension:  
 
-data_structure <- data_structure_resp|>
-  resp_body_xml() |>
-  as_list()|>
-  pluck("Structure", "Structures", "Dataflows", "Dataflow", "Annotations") |>
-  map_dfr(
-    \(x) {
-      tibble(
-        layout = x |> pluck(2, 1),
-        defn = x |> pluck(1, 1),
-      )
-    }
-) 
-
-# structure information
-data_structure
-
-# close connection
-close(data_structure_resp)
+```{r tidyDataInfo, include=TRUE}
+# output the header of dimensions
+head(TED_tables)
 ```
 
 
-Create a query to identify whether data is available in the database.  To request data availability, users must provide the following elements:  
-
-  - context:
-  - agencyId:
-  - resourceId:
-  - version:
-  - key:
-  - componentId:
-  
-Users can also provide optional information for:  
-
-  - mode:
-  - references:
-
-the 'GET data query' retrieves the same response as the test function on Aotearoa Data Explorer API test page, but it doesn't show the data
 
 
 # __'GET data by key'__ query
@@ -307,8 +200,7 @@ req_dry_run(data_by_key_req)
 
 data_by_key_resp <- req_perform(data_by_key_req)
 
-# close connection
-close(data_by_key_resp)
+
 
 # convert the response to something readable
 data_by_key <- data_by_key_resp |>
@@ -328,7 +220,12 @@ data_by_key_tbl <- stats::xtabs(OBS_VALUE~CEN23_TED_002 + CEN23_YEAR_001, data =
 str(data_by_key_tbl)
 
 data_by_key_tbl
+```
 
+
+```{r fitTEDYear, echo=T, include=T}
+# close connection
+close(data_by_key_resp)
 
 fit.dbk <- glm(OBS_VALUE~CEN23_TED_002+CEN23_YEAR_001,
             data = data_by_key,
@@ -352,6 +249,9 @@ Well, what does this tell us?
   - three digit indicators are key values for each means of travel to education
   - '99' are key values for 'total gender' and 'total age groups'
   
+
+
+
 ## what about just downloading csv and making contingency table
 
 ```{r csvYear}
