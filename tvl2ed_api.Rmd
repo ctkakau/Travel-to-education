@@ -387,6 +387,7 @@ extract_dimensions <- function(resp){
 
 return(list(dimensions = dims, structure = tables))
 }
+
 ```
 
 
@@ -423,38 +424,45 @@ ade_api_data_by_key <- function(key, resourceId = "CEN23_TRA_001", struc = NULL)
       contains("TED"),
       contains("YEAR"),
       contains("VALUE")
-     ) 
+     )
   
-  # this creates a tibble with a bunch of data.frames
-  df <- map2(data[,1:5], struc$structure,
-             # merge by code to access text description
-             ~ merge(.x, .y, by.x = 1, by.y = "code", 
-                     all.x = T, all.y = F) |>
-               # retain text description
-               select(level)) |>
-    # lift nested list
-    map_dfr(\(x) x |> pluck(1))
+  # create df for merging data
+  df <- map2(data[,1:5],
+     struc$structure,
+     \(x, y){
+       # create a tibble to give a colname for referencing in inner_join
+       x <- tibble(xname=x)
+       
+       # merge columns
+       inner_join(x, y, by = join_by(xname == y$code))|>
+    # retain text description
+    select(level)
+     }) |>
+    #   # lift nested list
+    map_dfr(\(x) x |> pluck(1))  #|>
   
-  # re-attach ovserved values
+  
+  # re-attach observed values
   df <- cbind(df, data[,6])
   
   # rename columns to something shorter
   names(df) <- c("AGE", "EDU", "GEN", "TED", "YEAR", "COUNT")
-
+ 
+  
   return(df)
 
 }
 
 
 
-# # test the "info about data" function
-# df_info <- ade_api_info_about_data()
-# 
-# # test the dimension extractor function
-# df_dims <- extract_dimensions(df_info)
-# 
-# # test the "data by key" query
-# df_by_key <- ade_api_data_by_key(key, "CEN23_TRA_001", df_dims)
+# test the "info about data" function
+df_info <- ade_api_info_about_data()
+
+# test the dimension extractor function
+df_dims <- extract_dimensions(df_info)
+
+# test the "data by key" query
+df_by_key <- ade_api_data_by_key(key, "CEN23_TRA_001", df_dims)
 
 ```
 
@@ -467,26 +475,28 @@ gen <- df_dims[[2]][[3]]
 ted <- df_dims[[2]][[4]]
 year <- df_dims[[2]][[5]]
 
-names(df_dims$structure)
+# names(df_dims$structure)
 age_ <- "1+2+3+4" # 15 yr age groups
 gen_ <- "1+2+3" # individual genders
 ted_ <- "010+009+008+007+006+005+004+003+002+001"
 year_ <- "2018+2023" # all years
-edu_regions <- c(edu$code[(as.numeric(edu$code) <=20) & (nchar(edu$code) <=2)])
-edu_regions
-edu_ <- "01+02+03+04+05+06" # some regional breakdowns
+
+# select the regional council codes
+edu_regions <- paste(edu[(as.numeric(edu$code) <=19) & (nchar(edu$code) ==2),]$code, collapse = "+")
+edu_ <- edu_regions # some regional breakdowns
+# edu_ <- c("01+02+03+17+18")
 
 
 
 
-
-# key <- "2018+2023.01+02+03.010+009+008+007+006+005+004+003+002+001.99.99"
+# key
 key <- paste(year_, edu_, ted_, age_, gen_, sep = ".")
 
-more_tests <- ade_api_data_by_key(key, "CEN23_TRA_001", TED_tables)
-str(more_tests)
+# query data
+tvl_to_ed <- ade_api_data_by_key(key, "CEN23_TRA_001", df_dims)
 
-TED_tables[[2]][33,]
+
+
 ```
 
 
