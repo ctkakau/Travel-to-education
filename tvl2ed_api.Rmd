@@ -3,11 +3,15 @@ title: "TravToEd_queries"
 author: 'Chad Kakau: 300212228'
 date: "2024-12-19"
 output:
-  html_document: default
+  bookdown::html_document2: 
+    fig_caption: yes
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = F, warning = F, include = F, message = F)
+
+library(dplyr)
+library(tidyr)
 authKey <- "5dc60d5341c3446690edc70c8bdf67ab"
 shapeKey <- "92c010068afb47089f76501613231717" #TED23
 # territorial authority shapefile data
@@ -31,9 +35,9 @@ There are other queries that could be used for creating an interface that allows
   2. GET information about available data
   3. GET 'travel to education' data
   4. Fit a range of models to data
-  5. Interpret the different models
+  5. Interpret the different models \@ref(sec1)
 
-# 1. Retrieve the API query structure
+# Retrieve the API query structure{#sec1}
 
 The Aotearoa Data Explorer API page provides guidance on creating queries for accessing data.  Developers must provide authentication and this created quickly by providing a valid email [(instructions here)](https://portal.apis.stats.govt.nz/documentation).  The Aotearoa Data Explorer API provides a range of queries and allows developers to test queries online to understand the structure and format of the responses.  This document focusses on two queries that will help determine the key dimensions and levels available for access, which can be used to query the database for specific data sets by filtering those dimensions:  
 
@@ -45,7 +49,7 @@ The Aotearoa Data Explorer API page provides guidance on creating queries for ac
     
     "GET http://apis.stats/govt.nz/ade-api/rest/data/{flowRef}/{key}[?dimenstionAtObservation][&detail][&includeHistory]"
 
-# 2. GET information about data availability  
+# GET information about data availability  
 
 We can first use the "httr2" package to access the Aotearoa Data Explorer API and call the "GET information about Data availability" query to determine relevant data keys.  The "httr2" provides a range of tools for interacting with APIs including constructing, validating, and sending requests, handling responses and managing a range of standard API actions.  
 
@@ -225,7 +229,7 @@ The "Census Year" dimension has `r length(TED_tables[[5]]$code)` levels that are
 `r knitr::kable(head(TED_tables[[5]]))`  
 
 
-# 3. __'GET data by key'__ query
+# __'GET data by key'__ query
 
 Now knowing the individual codes for different levels, We can construct an API request for "travel to education" data by selecting individual levels of key dimensions and totals of other dimensions.  For instance to retrieve counts for individual means of travel over different years, we include the individual levels for "Year" ("2018+2023") and the individual levels for "main means of travel" ("010+009+008+007+006+005+004+003+002+001"), with totals for the other dimensions - "Educational institution" (9999), "Age" ("99"), "Gender" ("99").    
 
@@ -245,9 +249,9 @@ The request takes the format:
     - format:  "csv"
     - detail: "full"  
 
-We can check the structure of the request and send the response to the API.
+We can check the structure of the request and send to the API.
 
-```{r q_getDataByKey_ReqAndResp, echo=T, include=T}
+```{r q_getDataByKey_ReqAndResp, include=T}
 # get data by the key
 # 'http://apis.stats/govt.nz/ade-api/rest/data'/{flowRef}/{key}[?dimenstionAtObservation][&detail][&includeHistory]
 flowRef <- 'STATSNZ,CEN23_TRA_001,1.0'
@@ -262,12 +266,12 @@ data_by_key_req <- base_path |>
     detail = "full"
   )
 
-req_dry_run(data_by_key_req)
+# req_dry_run(data_by_key_req)
 
 data_by_key_resp <- req_perform(data_by_key_req)
 ```
 
-We requested data in csv format so the response organises the data in a reasonably well-structured way that we can easily access (using "httr2") and convert (using "readr" and "dplyr" packages in R).  We initially extract the data as a tibble data frame ...  
+We requested data in csv format so the API organises the response in a reasonably well-structured way that we can easily access (using "httr2") and convert (using "readr" and "dplyr" packages in R).  We initially extract the data as a tibble data frame ...  
 
 ```{r getDataByKey, include=T}
 # convert the response to something readable
@@ -283,10 +287,9 @@ data_by_key <- data_by_key_resp |>
              by = c("CEN23_TED_002" = "code")) |>
   mutate(CEN23_TED_002 = level) |>
   select(-level) 
-
-# output the tibble data frame
-data_by_key
 ```
+
+`r knitr::kable(data_by_key)`
 
 ... and create a contingency to more efficiently review the counts ("OBS_VALUE") by categories ("CEN23_TED_002", "CEN23_YEAR_001").
 
@@ -295,11 +298,11 @@ data_by_key
 data_by_key_tbl <- stats::xtabs(
   OBS_VALUE~CEN23_TED_002 + CEN23_YEAR_001, 
   data = data_by_key) 
-
-# output the crosstabulated table
-data_by_key_tbl
 ```
-From the contingency table, we can see that counts for the majority of the different means of travel to education were higher in 2023 than 2018 with the exception of travel by "Ferry", "School bus", "Train", and "Walk or jog".  To better understand the relationship here we can try to fit a model and see how well that model explains our data.
+
+`r knitr::kable(data_by_key_tbl)` 
+
+From the contingency table, we can see that counts for the majority of the different means of travel to education were higher in 2023 than 2018 with the exception of travel by "Ferry", "School bus", "Train", and "Walk or jog".  
 
 ```{r q_getDataByKey_cleanup}
 # close connection
@@ -308,61 +311,13 @@ close(data_by_key_resp)
 rm(list = c("data_by_key_req", "data_by_key_resp"))
 ```
 
-# 4. Fitting the models:  
+Before doing any more detailed analysis and to make data retrieval easier, we create functions that access the Aotearoa Data Explorer API, extract relevant data and format the data in structured data frames.
 
-The census data represents a count of responses to the census question "What was your main means of travel to education?".  The question has been asked in the 2018 and 2023 census questionnaires and provides for 10 possible responses, with that can be summarised across several independent variables:  Age, Educational institution address, Gender, and Census Year.  Each of these independent variables can be used as a predictor in a regression model, either individually or in combination.  
-
-For this study, the response variable is the observed count ("OBS_VALUE") of responses for a particular means of travel.  Since we are modelling count data, we will use poisson regression to understand any relationships between our variables.  We will look at XXXXXXXXX models:  
-
-  - mutual independence: variables are independent of each other
-  - 
-
-$$ln(\lambda)= \beta_0 + \sum \beta_i x_i, y \sim \text{pois}(\lambda)$$
-
-## Retrieve dataset with predictors: Age (major groupings), Year, Gender, Main means of travel  
-
-To model the data we will retrieve the data with the following predictors:  
-
-  - Age: "Under 15 years", "15-29 years", "30-64 years", "65 years and over"
-  - Year:  "2018", "2023"
-  - Gender: "Male/Tāne", "Female/Wahine", "Another gender / He ira kē anō"
-  - Main means of travel: all means of travel
-  
-```{r ade_api_info_fn}
+```{r fn_infoDimExtraction}
 # GET "https://apis.stats.govt.nz/ade-api/rest/availableconstraint/{flowRef}/{key}"
 
-# function to retrieve information about data
-ade_api_info_about_data <- function(key = "all", resourceId = "CEN23_TRA_001") {  
-  
-  # set parameters
-  flowRef <- resourceId
-  key <- "all"
-  
-  # construct request
-  req <- base_path |>
-    req_url_path_append("availableconstraint") |>
-    req_url_path_append(flowRef) |>
-    req_url_path_append(key) |>
-    req_url_query(
-      mode = "exact",
-      references = "codelist")
-  
-  # preview the request
-  req_dry_run(req)
-  
-  # perform request
-  resp <- req_perform(req) 
-  
-  data <- resp |>
-  resp_body_xml() |>
-  as_list()
-  
-  return(data)
-}
-```
+######################################
 
-
-```{r data_dims_fn}
 # function to extract dimensions 
 extract_dimensions <- function(resp){
   
@@ -388,13 +343,53 @@ extract_dimensions <- function(resp){
 return(list(dimensions = dims, structure = tables))
 }
 
-```
+###############################
 
-
-```{r data_by_key_fn}
-# function for retrieving data
-ade_api_data_by_key <- function(key, resourceId = "CEN23_TRA_001", struc = NULL) {
+# function to retrieve information about data
+ade_api_info_about_data <- function(resourceId = "CEN23_TRA_001") {  
   
+  # set parameters
+  flowRef <- resourceId
+  key <- "all"
+  
+  # construct request
+  req <- base_path |>
+    req_url_path_append("availableconstraint") |>
+    req_url_path_append(flowRef) |>
+    req_url_path_append(key) |>
+    req_url_query(
+      mode = "exact",
+      references = "codelist")
+  
+  # preview the request
+  # req_dry_run(req)
+  
+  # perform request
+  resp <- req_perform(req) 
+  
+  data <- resp |>
+  resp_body_xml() |>
+  as_list()
+  
+  
+  
+  # return(data)
+  data_dimensions <- extract_dimensions(data)
+  
+  return(data_dimensions)
+  
+}
+
+# function for retrieving data
+ade_api_data_by_key <- function(key, resourceId = "CEN23_TRA_001") {
+  
+  # request "information about data" from ADE-API
+  struc <- ade_api_info_about_data(resourceId = resourceId)
+  
+  # create dimension tables
+  # struc <- extract_dimensions(info_about_data)
+  
+  # create parameters for data query
   flowRef <- paste('STATSNZ', resourceId ,'1.0', sep = ",")
   key <- key
 
@@ -408,7 +403,7 @@ ade_api_data_by_key <- function(key, resourceId = "CEN23_TRA_001", struc = NULL)
     )
   
   # output the request for the user
-  req_dry_run(req)
+  # req_dry_run(req)
   
   # send the request and save the response
   resp <- req_perform(req)
@@ -416,239 +411,1122 @@ ade_api_data_by_key <- function(key, resourceId = "CEN23_TRA_001", struc = NULL)
   # convert the response to something readable
   data <- resp |>
     resp_body_string() |>
-    readr::read_csv(col_types = "cccccc") |>
-    select(
-      contains("AGE"),
-      contains("EDU"),
-      contains("GEN"),
-      contains("TED"),
-      contains("YEAR"),
-      contains("VALUE")
-     )
+    readr::read_csv(col_types = "cccccc") #|>
   
+  
+  # remove first (DATAFLOW) and last (OBS_STATUS) columns
+  data_length <- length(names(data))
+  data <- data |> select(-1, -data_length)
+  
+  # create vector of shortened names for columns
+  nms <- names(data) |> tibble() |> tidyr::separate_wider_delim(
+    cols = "names(data)",
+    delim = "_",
+    names = c(NA, "dim", NA),
+    too_few = "align_start",
+    too_many= "drop"
+    )
+  
+  # update names of data frame
+  names(data) <- nms[[1]]
+  
+  # sort column names in alphabetical order to match data output
+  no_val <- nms[[1]][-(data_length-2)]
+  sorted_nms <- order(no_val, decreasing = F, method="auto")
+  
+  # reorder columns in data frame
+  data <- data |>
+    select(
+      sorted_nms, 
+      VALUE
+     )
   # create df for merging data
   df <- map2(data[,1:5],
      struc$structure,
      \(x, y){
        # create a tibble to give a colname for referencing in inner_join
        x <- tibble(xname=x)
-       
        # merge columns
        inner_join(x, y, by = join_by(xname == y$code))|>
     # retain text description
     select(level)
      }) |>
-    #   # lift nested list
-    map_dfr(\(x) x |> pluck(1))  #|>
+    # lift nested list
+    map_dfr(\(x) x |> pluck(1)) 
   
   
   # re-attach observed values
   df <- cbind(df, data[,6])
   
-  # rename columns to something shorter
-  names(df) <- c("AGE", "EDU", "GEN", "TED", "YEAR", "COUNT")
- 
-  
   return(df)
 
 }
 
-
-
-# test the "info about data" function
-df_info <- ade_api_info_about_data()
-
-# test the dimension extractor function
-df_dims <- extract_dimensions(df_info)
-
-# test the "data by key" query
-df_by_key <- ade_api_data_by_key(key, "CEN23_TRA_001", df_dims)
-
 ```
 
 
-```{r full_data_test, echo=T, include=TRUE}
+# Do some exploratory analysis
 
-age <- df_dims[[2]][[1]]
-edu <- df_dims[[2]][[2]]
-gen <- df_dims[[2]][[3]]
-ted <- df_dims[[2]][[4]]
-year <- df_dims[[2]][[5]]
+In order to conduct exploratory analysis, we first retrieve the data from the API, review each predictor variable in relation to the count of responses, and then conduct review of pairs of predictor variables.  Initial analysis is conducted using three visual plots.  The "break-down by year" plot shows the count of each level in the variable for 2018 and 2023.  This plot shows the absolute counts for each level and can be used to identify the levels that are most "important" (i.e. highest count). For greater insight into the change between 2018 and 2023, two additional plots show "absolute-change" and "percent-change".  The "absolute-change" chart provides a direct measure of the total quantity of change between 2018 and 2023. The "percent-change" chart quantifies change between 2018 and 2023 as a proportion of the 2018 count.  This ratio of change allows for comparison between categories that may be measured on different scales.
 
-# names(df_dims$structure)
+We will first retrieve the data with the following predictors:  
+
+  - Age: "Under 15 years", "15-29 years", "30-64 years", "65 years and over"
+  - Year:  "2018", "2023"
+  - Gender: "Male/Tāne", "Female/Wahine", "Another gender / He ira kē anō"
+  - Main means of travel: all means of travel
+
+```{r full_data_test, include=TRUE}
+# create a reference dimension table so we can set up filters for future queries
+ted_dims <- ade_api_info_about_data(resourceId = "CEN23_TRA_001")
+
+# specific parameters
 age_ <- "1+2+3+4" # 15 yr age groups
 gen_ <- "1+2+3" # individual genders
 ted_ <- "010+009+008+007+006+005+004+003+002+001"
 year_ <- "2018+2023" # all years
 
-# select the regional council codes
-edu_regions <- paste(edu[(as.numeric(edu$code) <=19) & (nchar(edu$code) ==2),]$code, collapse = "+")
+# select the regional council codes (from 01:18, but some have been removed)
+edu <- ted_dims$structure$`Educational institution address`
+edu_regions <- paste(edu[(as.numeric(edu$code) <=19) & (nchar(edu$code) ==2) & !(as.numeric(edu$code) %in% c(10, 11)),]$code, collapse = "+")
 edu_ <- edu_regions # some regional breakdowns
-# edu_ <- c("01+02+03+17+18")
-
-
-
 
 # key
 key <- paste(year_, edu_, ted_, age_, gen_, sep = ".")
 
-# query data
-tvl_to_ed <- ade_api_data_by_key(key, "CEN23_TRA_001", df_dims)
-
-
+# query database for Travel to education
+tvl_to_ed_rc <- ade_api_data_by_key(key, "CEN23_TRA_001") |>
+  mutate(
+    AGE = factor(AGE, levels = c("Under 15 years", "15-29 years", "30-64 years", "65 years and over")),
+    TED = factor(TED) |> relevel(ref="Walk or jog"),
+    YEAR = factor(YEAR, levels = c("2018", "2023")),
+    )
 
 ```
 
 
-```{r}
-resourceId = "CEN23_TRA_001"
-flowRef <- paste('STATSNZ', resourceId ,'1.0', sep = ",")
-key <- "2018+2023.01+02+03+100800.010+009+008+007+006+005+004+003+002+001.99.99"
+```{r fn_ggplot, include=T}
 
-req <- base_path |>
-  req_url_path_append('data') |> 
-  req_url_path_append(flowRef) |>
-  req_url_path_append(key) |>
-  req_url_query(
-    format = 'csv',
-    detail = "full"
-  ) |>
-  req_headers(
-    `content-language`="en,en-NZ",
-    `Content_Type`="charset=utf-8"
-  )
-
-req_dry_run(req)
-
-resp <- req_perform(req)
-
-# convert the response to something readable
-data <- resp |>
-  resp_body_string() |>
-  readr::read_csv()
-
-data$CEN23_EDU_001
-```
-
-
-```{r}
-resourceId <- "CEN23_TRA_001"
-flowRef <- paste('STATSNZ', resourceId ,'1.0', sep = ",")
-key <- key
-
-req <- base_path |>
-  req_url_path_append('data') |> 
-  req_url_path_append(flowRef) |>
-  req_url_path_append(key) |>
-  req_url_query(
-    format = "csv", #'jsondata',
-    detail = "full"
-  )
-
-req_dry_run(req)
-
-resp <- req_perform(req)
-
-# convert the response to something readable
-data <- resp |>
-  resp_body_string() |>
-  readr::read_csv()
-# data$data$structures[[1]]$dimensions$observation -> gives an unnamed list of five
-# nested lists, each containing six elements holding information about a dimension
-# $id, $name, $names(list($en: chr)), $keyPosition, $roles(list(chr)), 
-# $values(list(list of 5 or 6($id, $order, $name, $names, $annotations, $parent(= "total" code))))
-
-str(data$data$structures[[1]]$dimensions$observation, max.level=5)
-  
-data <- resp |>
-  resp_body_string() |>
-  readr::read_csv() |>
-  select(
-    contains("YEAR"),
-    contains("EDU"),
-    contains("TED"),
-    contains("GEN"),
-    contains("VALUE")
-   ) |>
-  inner_join(test_dims$structure$`Main means of travel to education`, 
-             by = c("CEN23_TED_002" = "code")) |>
-  mutate(CEN23_TED_002 = level) |>
-  select(-level)
-
-######### try inner join for all
-data <- resp |>
-  resp_body_string() |>
-  readr::read_csv(col_types = "cccccc") |>
-  select(
-    contains("YEAR"),
-    contains("EDU"),
-    contains("TED"),
-    contains("AGE"),
-    contains("GEN"),
-    contains("VALUE")
-   ) 
-# data[, 1:5]  |>
-#   map2(.y = test_dims$structure,
-#        \(x = .x, y = .y) {
-#          inner_join(
-#            x,
-#            y,
-#            by = join_by(x == y$code), 
-#            keep = TRUE)
-#            }
-#        ) |>
-#   
-#   inner_join(y = test_dims$structure[[1]], 
-#              by = join_by(paste(x$CEN23_YEAR_001) == y$code)) |>
-#   mutate(CEN23_TED_002 = level) |>
-#   select(-level)
-
-  
-# names(data)
+# create plots for two predictors by value
+# ted_plot <- function(data, y, x1, x2=NULL, labs, type = 1) {
+#   library(ggplot2)
+#   library(cowplot)
 # 
-data[-1] |>
-  map2(
-     .y = test_dims$structure,
-     .f = \(x=.x, y=.y) {
-       print(x[1])
-       print("####")
-#        # print(y)
-#        # inner_join(x = x,
-#        #     y = y, 
-#        #     by = join_by(x == y$code), 
-#        #     copy = TRUE)
-       })
+#   # retrieve data
+#   lollipops <- lollipop_refs(data = data, 
+#                              y = {{y}}, 
+#                              x1 = {{x1}}, 
+#                              x2 = {{x2}}, 
+#                              labs = labs, 
+#                              type = type)
+#   
+#   print(typeof(type))
+#   
+#   
+#   # create base ggplot
+#   base <- ggplot(
+#           data = lollipops,
+#           aes(
+#             x = {{x1}},
+#             y = {{y}}
+#             )
+#           )+
+# 
+#     coord_flip() +
+#     labs(
+#       x = paste(labs[1]),
+#       y = paste(labs[3], "(,000)", sep = " ")
+#     ) +
+#     scale_y_continuous(
+#       labels = function(x) paste(x/1000)
+#     ) +
+#     theme(legend.position="none")
+#   
+#   # base
+# 
+#   # create plot for totals
+#   p1 <- base +
+#     geom_bar(
+#           show.legend = T,
+#           position = "dodge", stat = 'summary', fun = sum,
+#           )+
+#     labs(
+#       title = paste(labs[1], "by", labs[2], sep = " ")
+#     ) +
+#     theme(legend.position = "top")
+# 
+#   p1
+  #   
 
-data[[1]]
+  
+  
+    
+  # # bar plot with two variables
+  # p1 <- ggplot(data = lollipops) + #
+  #   geom_bar(
+  #     position = "dodge", stat = 'summary', fun = sum,
+  #     aes(x = {{x1}}, y = {{y}}, fill = fill_col),
+  #     show.legend = T,
+  #            ) +
+  #   coord_flip() + #
+  #   labs(
+  #     title = paste(labs[1], "by", labs[2], sep = " "),
+  #     x = labs[1],
+  #     y = paste(labs[3], "(,000)", sep = " ")
+  #   ) +
+  #   scale_y_continuous(
+  #     labels = function(x) paste(x/1000)
+  #     )+
+  #   theme(legend.position = "top")
+
+  
+  # changes <- base +
+  #   list(
+  #     if(type ==1) {
+  #       geom_point(
+  #         shape = 21,
+  #         aes(
+  #           y = 0,
+  #           # colour = YEAR
+  #           ),
+  #         position = position_dodge(width = 1.0),
+  #         size = 3
+  #         )
+  #     } else {
+  #       geom_point(
+  #         shape = 21,
+  #         aes(
+  #           y = 0,
+  #           # colour = {{x2}}
+  #           ),
+  #         position = position_dodge(width = 1.0),
+  #         size = 3
+  #         )
+  #       }
+  #   )
+  
+  # changes
+  
+  # p2 <- changes +
+  #   geom_linerange(
+  #     aes(
+  #       ymin = 0,
+  #       ymax = YEND
+  #     ),
+  #     position = position_dodge(width = 1.0),
+  #     size = 0.5,
+  #     show.legend = F
+  #   ) +
+  #   geom_point(
+  #     aes(y = YEND),
+  #     position = position_dodge(width=1.0),
+  #     size = 3
+  #   ) +
+  #   labs(
+  #     x = paste(labs[1]),
+  #     y = "Change (,000)"
+  #   ) +
+  #   theme(legend.position =)
+  # 
+  # p2
+  # ### lollipop: value difference for x1,
+  # p2 <- ggplot(data = lollipops, #
+  #        aes(x={{x1}}, 
+  #            # colour = fill_col,
+  #          )
+  #        ) +
+  #   geom_linerange(
+  #     aes(ymin = 0,ymax = YEND
+  #       ),
+  #     position = position_dodge(width = 1.0),
+  #     size = .5,
+  #     show.legend = F
+  #     ) +
+  #   geom_point(
+  #     shape = 21,
+  #     aes(y = 0),
+  #     position = position_dodge(width=1.0),
+  #     size = 3) +
+  #   geom_point(
+  #     aes(y = YEND),
+  #     position = position_dodge(width=1.0),
+  #     size = 3) +
+  # 
+  #   labs(x = paste(labs[1]),
+  #        y = "Change (,000)") +
+  #   scale_y_continuous(
+  #     labels = function(x) paste(x/1000),
+  #     n.breaks = 6
+  #   ) +
+  #   theme(legend.position = "none")+
+  #   coord_flip()
+  # 
+  # 
+  # # pct change lollipop
+  # p3 <- ggplot(data = lollipops,
+  #        aes(x={{x1}}, 
+  #            # colour = ifelse(type==1, YEAR, {{x2}}),
+  #          )
+  #        ) +
+  #   geom_linerange(aes(ymin = 0,ymax = PCT_CHG
+  #       ),
+  #     position = position_dodge(width = 1.0),
+  #     size = .5
+  #     ) +
+  #   geom_point(
+  #     shape = 21,
+  #     aes(y = 0),
+  #     position = position_dodge(width=1.0),
+  #     size = 3) +
+  #   geom_point(
+  #     aes(y = PCT_CHG),
+  #     position = position_dodge(width=1.0),
+  #     size = 3) +
+  #   labs(x = paste(labs[1]),
+  #        y = "Change (%)") +
+  #   scale_y_continuous(
+  #     labels = function(x) paste(x*100),
+  #     n.breaks = 6
+  #   ) +
+  #   theme(legend.position = "none",
+  #         axis.text.y = element_blank(),
+  #         axis.title.y = element_blank()) +
+  #   coord_flip()
+  # 
+  # # multiplot output
+  #   bottom <- cowplot::plot_grid(p2,
+  #                              p3,
+  #                              nrow =1,
+  #                              ncol =2,
+  #                              rel_widths = c(3, 2),
+  #                              labels = c("B", "C"))
+  # nested <- cowplot::plot_grid(p1,
+  #                              bottom,
+  #                              nrow =2,
+  #                              ncol =1,
+  #                              rel_heights = c(3, 2),
+  #                              labels = "A")
+  # 
+  # return(nested)
+  
+# }
 ```
 
 
-```{r fitTEDYear, include=T}
 
-ted_year <- glm(OBS_VALUE~CEN23_TED_002+factor(CEN23_YEAR_001),
-            data = data_by_key,
-            family = "poisson")
-# summarise the output
-summary(ted_year)
-
-# convert to odds
-round(exp(coef(ted_year)), 3)
+```{r}
+# ted_plot(
+#   data = tvl_to_ed_rc,
+#   y = VALUE,
+#   x1 = TED,
+#   x2 = AGE,
+#   labs = c("Main means of travel", "age", "Count"),
+#   type = 2
+#   )
 ```
 
 
-```{r GOF_fitTEDYear, include=T}
-1-pchisq(ted_year$deviance, ted_year$df.residual)
 
-1-pchisq(ted_year$null.deviance - ted_year$deviance, ted_year$df.null - ted_year$df.residual)
 
-ted_year_sat <- glm(OBS_VALUE~CEN23_TED_002*factor(CEN23_YEAR_001),
-            data = data_by_key,
-            family = "poisson")
-summary(ted_year_sat)
+```{r fn_ggplot_two_var, include=T}
 
-ted <- glm(OBS_VALUE~CEN23_TED_002,
-            data = data_by_key,
-            family = "poisson")
-summary(ted)
+# create plots for two predictors by value
+two_var_plot <- function(data, y, x1, x2, labs) {
+  library(ggplot2)
+  library(cowplot)
+  
+ 
+  lollipops <- lollipop_refs(data = data, 
+                             y = {{y}}, 
+                             x1 = {{x1}}, 
+                             x2 = {{x2}}, 
+                             labs = labs, 
+                             type =2)
+  
+
+  # bar plot with two variables
+  p1 <- ggplot(data = lollipops) + #
+    geom_bar(
+      position = "dodge",
+             stat = 'summary',
+             fun = sum,
+             aes(x = {{x1}}, y = {{y}}, fill = {{x2}}),
+      show.legend = T,
+             ) +
+    coord_flip() +
+    labs(
+      title = paste(labs[1], "by", labs[2], sep = " "),
+      x = labs[1],
+      y = paste(labs[3], "(,000)", sep = " ")
+    ) +
+    scale_y_continuous(
+      labels = function(x) paste(x/1000)
+      )+
+    theme(legend.position = "top")
+  
+  
+  
+  ### lollipop: value difference for x1,
+  p2 <- ggplot(data = lollipops, #
+         aes(
+           x={{x1}},
+           colour = {{x2}},
+           )
+         ) +
+    geom_linerange(
+      aes(ymin = 0,ymax = YEND
+        ),
+      position = position_dodge(width = 1.0), 
+      size = .5,
+      show.legend = F
+      ) +
+    geom_point(
+      shape = 21,
+      aes(y = 0),
+      position = position_dodge(width=1.0),
+      size = 3) +
+    geom_point(
+      aes(y = YEND),
+      position = position_dodge(width=1.0),
+      size = 3) +
+ 
+    labs(x = paste(labs[1]),
+         y = "Change (,000)") +
+    scale_y_continuous(
+      labels = function(x) paste(x/1000), 
+      n.breaks = 6
+    ) +
+    theme(legend.position = "none")+
+    coord_flip()
+  
+  
+  # pct change lollipop
+  p3 <- ggplot(data = lollipops, 
+         aes(
+           x={{x1}},
+           colour = {{x2}},
+           )
+         ) +
+    geom_linerange(aes(ymin = 0,ymax = PCT_CHG
+        ),
+      position = position_dodge(width = 1.0), 
+      size = .5
+      ) +
+    geom_point(
+      shape = 21,
+      aes(y = 0),
+      position = position_dodge(width=1.0),
+      size = 3) +
+    geom_point(
+      aes(y = PCT_CHG),
+      position = position_dodge(width=1.0),
+      size = 3) +
+    labs(x = paste(labs[1]),
+         y = "Change (%)") +
+    scale_y_continuous(
+      labels = function(x) paste(x*100),
+      n.breaks = 6
+    ) +
+    theme(legend.position = "none",
+          axis.text.y = element_blank(),
+          axis.title.y = element_blank()) +
+    coord_flip()
+  
+  # multiplot output
+    bottom <- cowplot::plot_grid(p2,
+                               p3,
+                               nrow =1,
+                               ncol =2,
+                               rel_widths = c(3, 2),
+                               labels = c("B", "C"))
+  nested <- cowplot::plot_grid(p1,
+                               bottom,
+                               nrow =2,
+                               ncol =1,
+                               rel_heights = c(3, 2),
+                               labels = "A")
+  
+  return(nested)
+  
+}
 ```
+
+
+```{r fn_ggplot_one_var, include=T}
+# create plots for one predictor by value
+one_var_plot <- function(data, y, x1, labs) {
+  library(ggplot2)
+  library(gridExtra)
+  library(egg)
+
+  
+  lollipops <- lollipop_refs(data = data, 
+                             y = {{y}}, 
+                             x1 = {{x1}}, 
+                             x2 = NULL, 
+                             labs = labs, 
+                             type =1)  
+
+  
+  # bar plot with one variable
+  p1 <- ggplot(data = lollipops) +
+    geom_bar(
+      position = "dodge",
+             stat = 'summary',
+             fun = sum,
+             aes(x = {{x1}}, 
+                 y = {{y}}, 
+                 fill = YEAR),
+      show.legend = T,
+             ) +
+    coord_flip() +
+    labs(
+      title = paste(labs[1], "by", labs[2], sep = " "),
+      x = labs[1],
+      y = paste(labs[3], "(,000)", sep = " ")
+    ) +
+    scale_y_continuous(
+      labels = function(x) paste(x/1000)
+      )+
+    theme(legend.position = "top")
+  
+  
+  
+  ### lollipop: value difference for x1,
+  p2 <- ggplot(data = lollipops, 
+         aes(
+           x={{x1}}
+           )
+         ) +
+    geom_linerange(aes(ymin = 0,ymax = YEND
+        ),
+      position = position_dodge(width = 1.0), 
+      size = .5,
+      show.legend = F
+      ) +
+    geom_point(
+      shape = 21,
+      aes(y = 0,
+          colour = min(YEAR)),
+      position = position_dodge(width=1.0),
+      size = 3, 
+      ) +
+    geom_point(
+      aes(y = YEND,
+          colour = max(YEAR)),
+      position = position_dodge(width=1.0),
+      size = 3) +
+ 
+    labs(x = paste(labs[1]),
+         y = "Change (,000)") +
+    scale_y_continuous(
+      labels = function(x) paste(x/1000), 
+      n.breaks = 6
+    ) +
+    theme(legend.position = "none")+
+    coord_flip()
+  
+  
+  # pct change lollipop
+  p3 <- ggplot(data = lollipops, 
+         aes(
+           x={{x1}}
+           )
+         ) +
+    geom_linerange(aes(ymin = 0,ymax = PCT_CHG
+        ),
+      position = position_dodge(width = 1.0), 
+      size = .5
+      ) +
+    geom_point(
+      shape = 21,
+      aes(y = 0, 
+          colour = min(YEAR)),
+      position = position_dodge(width=1.0),
+      size = 3) +
+    geom_point(
+      aes(y = PCT_CHG,
+          colour = max(YEAR)),
+      position = position_dodge(width=1.0),
+      size = 3) +
+    labs(x = paste(labs[1]),
+         y = "Change (%)") +
+    scale_y_continuous(
+      labels = function(x) paste(x*100),
+      n.breaks = 6
+    ) +
+    theme(legend.position = "none",
+          axis.text.y = element_blank(),
+          axis.title.y = element_blank()) +
+    coord_flip()
+  
+  # multiplot output
+  bottom <- cowplot::plot_grid(p2,
+                               p3,
+                               nrow =1,
+                               ncol =2,
+                               rel_widths = c(3, 2),
+                               labels = c("B", "C"))
+  nested <- cowplot::plot_grid(p1,
+                               bottom,
+                               nrow =2,
+                               ncol =1,
+                               rel_heights = c(3, 2),
+                               labels = "A")
+
+  return(nested)
+}
+```
+
+
+```{r lollipop_refs}
+lollipop_refs <- function(data, y, x1, x2, labs, type = 1) {
+  
+  df <- (
+    # switch between 1 or 2 variables depending on "type"
+    if(type == 1) {
+    data |> tidyr::pivot_wider(id_cols= {{x1}},
+                               names_from = YEAR,
+                               values_from = {{y}})
+  } else {
+    data |> tidyr::pivot_wider(id_cols= c({{x1}}, {{x2}}),
+                               names_from = YEAR,
+                               values_from = {{y}})
+  }
+  
+  ) |>
+  mutate(
+    YEND = as.numeric(
+      map2(.x = `2023`,
+           .y = `2018`,
+           \(x, y) {
+             sum(x, na.rm = T)-sum(y, na.rm = T)
+             })
+      ),
+    PCT_CHG =  as.numeric(
+      map2(.x = `2023`,
+           .y = `2018`,
+           \(x, y) {
+             (sum(x, na.rm = T)-sum(y, na.rm = T))/sum(y, na.rm = T)
+             })
+      )
+    ) |>
+  tidyr::pivot_longer(cols = c(`2018`, `2023`),
+                      names_to = "YEAR",
+                      ) |>
+  select(-value)
+
+
+  # add YEND and PCT_CHG to data
+  lollipops <- left_join(
+    x = data,
+    y = df,
+    copy = T,
+    keep = F
+  )
+
+  return(lollipops)
+}
+
+```
+
+
+```{r test_lollipops}
+lollipop_refs(
+  data = tvl_to_ed_rc, 
+  y = VALUE, 
+  x1 = TED,
+  x2 = GEN,
+  labs=c("Main means of travel", "year", "Count"),
+  type = 2
+  )
+```
+
+
+Initial exploratory analysis will be conducted using visual plots and will focus first on individual predictors with the response variable (count), followed by analysis of pairs of predictors with the response variable.  
+
+## One predictor and the response variable  
+
+Review each predictor against the response variable using totals (by year), total change and percent change (between years) for each level of the predictor.  
+
+### Main means of travel to education  
+
+The main dimension of interest in this study is the "main means of travel to education" dimension, which counts the number of times different means of travel are used for travelling to the respondents place of education.  The dimension has several levels:  
+
+`r knitr::kable(tvl_to_ed_rc |> summarise(total = sum(VALUE, na.rm=T), .by=YEAR))`
+ 
+
+```{r oneTed, include = T, fig.cap="Total and changes in 'Main means of travel' for 2018 and 2023"}
+one_var_plot(
+  data = tvl_to_ed_rc, 
+  y = VALUE, 
+  x1 = TED, 
+  labs=c("Main means of travel", "year", "Count"))
+```
+
+Figure \@ref(fig:oneTed) A shows that "Passenger in a car, truck or van" had the highest count over both 2018 and 2023, followed by "Walk or jog", "Drive a car, truck, or van", "School bus" then "Public bus", "Study at home", and "Bicycle".  The categories "Train", "Ferry" and "Other" have low counts, that are consistent between both years.  Figure \@ref(fig:oneTed) B shows the two categories with highest change between 2018 and 2023 were "Study at home" (increasing by around 38,000) and "Passenger in a car, truck or van" (increasing by around 35,000).  The largest decrease was in category "Walk or jog", with a reduction of nearly 25,000).  Figure \@ref(fig:oneTed) C shows the highest percent-change increase was for the "Study at home" category (60%), followed by "Passenger in a car, truck or van" at just under 10% increase.  The categories with the largest decrease were "Ferry" and "Train", at around 20% decrease, followed by "Walk or jog" with a decrease of around 10%.  
+
+Based on this analysis, we are most interested in "Passenger in a car, truck or van", "Walk or jog", as the most popular responses that also had the largest absolute change in counts between 2018 and 2023; and "Study at home" as the highest absolute and percentage change. 
+
+
+### Age  
+
+`r knitr::kable(tvl_to_ed_rc |> summarise(Total = sum(VALUE, na.rm=T), .by=AGE))`
+
+
+```{r oneAge, include = T, , fig.cap="Total and changes in 'Age' for 2018 and 2023"}
+one_var_plot(
+  data = tvl_to_ed_rc, 
+  y = VALUE, 
+  x1 = AGE, 
+  labs=c("Age", "year", "Count"))
+```
+
+Figure \@ref(fig:oneAge) A shows that most respondents were in the "Under 15 years" category, followed by the "15-29 years" category, then "30-64 years" and finally the "65 years and over" category.  All categories increased between 2018 and 2023.  Figure \@ref(fig:oneAge)  B shows the largest absolute increase was in the "Under 15 years" category, increasing by just under 25,000, followed by 12,000 increase for "30-64 years" then "15-29 years".  Figure \@ref(fig:oneAge) C shows the highest percentage change was in the "30-64 years" category, increasing by nearly 12%, followed by the "65 years and over" category, and then an increase of 3.5% for the "Under 15 years" category.  
+
+The most important age groups are "Under 15 years" with the highest total count and absolute change.  Although containing fewer respondents in total, the "30-64 years" category has the highest percentage change, and second highest increase overall.  
+
+
+### Educational institute by address (region)  
+
+`r knitr::kable(tvl_to_ed_rc |> summarise(Total = sum(VALUE, na.rm=T), .by=EDU))`
+
+```{r oneEdu, include = T, , fig.cap="Total and changes in 'Educational institute location (region)' for 2018 and 2023"}
+one_var_plot(
+  data = tvl_to_ed_rc, 
+  y = VALUE, 
+  x1 = EDU, 
+  labs=c("Educational institution (region)", "year", "Count"))
+```
+
+Figure \@ref(fig:oneEdu) A shows that the highest number of responses were in the "Auckland Region", with a count over 800,000, followed by "Canterbury Region", "Wellington Region", then "Waikato Region".  Figure \@ref(fig:oneEdu) B shows the largest total increase was in "Auckland Region" (over 16,000), then "Canterbury Region" (nearly 12,000 increase), and then "Otago Region" and "Waikato Region", both with increases of around 3,000.  Figure \@ref(fig:oneEdu) C shows "Canterbury Region" has the highest percent-change at 8%, followed by "Otago Region", "Taranaki Region", and "Northland Region", all at, or just over 5%.
+
+The most important categories in the Educational institution address (region) dimension are "Auckland Region" with the highest total count and total change between 2018 and 2023, "Canterbury Region" as second highest total count, total change and highest percentage change between 2018 and 2023.  "Wellington Region" has the next highest total, althrough a relatively small change between census years. "Waikato Region" has the next highest total, and along with "Otago Region" , have the third and fourth highest total change between census years.
+
+### Gender  
+
+`r knitr::kable(tvl_to_ed_rc |> summarise(Total = sum(VALUE, na.rm=T), .by=GEN))`  
+
+```{r oneGen, include = T, fig.cap="Total and changes in 'Gender' for 2018 and 2023"}
+one_var_plot(
+  data = tvl_to_ed_rc, 
+  y = VALUE, 
+  x1 = GEN, 
+  labs=c("Gender", "year", "Count"))
+```
+
+"Gender" was added as a new concept in the 2023 census, prior to that, the concept of sex at birth was used.  That means there is no 2018 data to compare the gender level "Another gender / He ira kē anō", so changes assume an initial count of zero.
+
+Figure \@ref(fig:oneGen) A shows "Female/Wahine" has the highest total across both years, followed by "Male/Tāne".  "Another gender / He ira kē anō" has the lowest count.  Figure \@ref(fig:oneGen) B shows the greatest total change for "Female / Wahine" (increase of over 22,500), "Male / Tāne" increased by just under 10,000 and then "Another gender / He ira kē anō" with an increase of close to 7,500.  Figure \@ref(fig:oneGen) C shows "Another gender / He ira kē anō" has the highest percent-change at just over 4%, followed by "Female / Wahine" at just under 4% and then "Male / Tāne" with an increase of 1.5%.
+
+## Paired predictors and the response variable  
+
+Review each pair of predictors against the response variable using totals (by year), total change and percent change (between years) for each level of the predictor.  
+
+
+### Main means of travel by major age groups  
+
+```{r fn_cont_tbl}
+cont_tbl <- function(df, id, var){
+  
+  tbl <- df |> 
+    tidyr::pivot_wider(
+      id_cols = {{id}}, 
+      values_from=VALUE,
+      values_fn = ~sum(.x, na.rm = T),
+      names_from={{var}}
+      ) 
+  
+  return(tbl)
+}
+```
+
+
+`r knitr::kable(cont_tbl(tvl_to_ed_rc, TED, AGE))`
+
+```{r tedMajAge, include=T, fig.cap="Total and changes in 'Main means of travel' and 'Age' for 2018 and 2023"}
+two_var_plot(
+  data = tvl_to_ed_rc, 
+  y = VALUE, 
+  x1 = TED, 
+  x2 = AGE, 
+  labs=c("Main means of travel", "age", "Count"))
+```
+
+Figure \@ref(fig:tedMajAge) A shows that "Under 15 years" dominates the totals, followed by "15-29 years", then "30-64 years".  For the "Under 15 years" dimension, "Passenger in a car, truck or van" has by far the highest count, followed by "Walk or jog", "School bus", and then "Bicycle".  For the "15-29 years" age group, "Walk or jog" has the highest count, followed by "Drive a car, truck or van", then "Public bus" and "Passenger in a car, truck or van", followed by "School bus" and "Study at home".  For the "30-64 years" age group, "Drive a car, truck or van" has the highest count, followed by "Study at home".  
+
+Figure \@ref(fig:tedMajAge) B shows that "Under 15 years" age group has largest total change for "Passenger in a car, truck or van" (increase over 30,000), and "Walk or jog" (decrease just over 10,000).  The "15-29 years" age group has largest total change for "Study at home" (increase of nearly 15,000), "Walk or jog" (decrease of nearly 10,000) and a small increase of just under 5,000 for "Passenger in a car, truck or van".  The "30-64 years" age group had largest total change for "Study at home" (increase over 20,000), and a decrease of nearly 5,000 for "Drive a car, truck or van".
+
+Figure \@ref(fig:tedMajAge) C shows quite large percentage changes across all age groups, however, since the total quantity change is reasonably small for most of these changes, the main changes of interest are: "Under 15 years", around 8% increase for "Passenger in a car, truck or van", and 6% decrease in "Walk or jog".  "15-29 years" 70% increase in "Study at home" and over 10% drop in "Walk or jog".  "30-64 years" 60% increase in "Study at home" and nearly 10% decrease in "Drive a car, truck or van".
+
+This analysis highlights the importance of the "Passenger in a car, truck or van", "Walk or jog", "School bus", and "Bicycle" categories for the "Under 15 years" age group.  For the "15-29 years" age group, the most important categories appear to be "Walk or jog", "Passenger in a car, truck or van", and "Study at home".  For the "30-64 years" age group, the most important categories appear to be "Drive a car, truck or van", and "Study at home".  The "65 years and over" age group appears to have little impact on the overall data and could be considered for consolidation with the "30-64 years age group"
+
+### Main means of travel by gender  
+
+`r knitr::kable(cont_tbl(tvl_to_ed_rc, TED, GEN))`
+
+```{r tedGen, include=T, fig.cap="Total and changes in 'Main means of travel' and 'Gender' for 2018 and 2023"}
+two_var_plot(
+  data = tvl_to_ed_rc, 
+  y = VALUE, 
+  x1 = TED, 
+  x2 = GEN, 
+  labs=c("Main means of travel", "gender", "Count"))
+```
+
+Figure \@ref(fig:tedGen) A shows higher counts of "Female / Wahine" across most "Main means of travel", the exceptions being "School bus", "Bicycle" and "Other".  For "Female / Wahine", "Passenger in a car, truck or van" has the highest count, followed by "Walk or jog", "Drive a car, truck or van", "School bus", "Study at home" and then "Public bus".  For "Male / Tāne", "Passenger in a car, truck or van" has the highest count, followed by by "Walk or jog", "School bus", "Drive car, truck or van", then "Public bus" and "Bicycle".  Counts for "Another gender / He ira kē anō" are too low for analysis from this plot.  
+
+Figure \@ref(fig:tedGen) B shows "Female / Wahine" have largest change for "Study at home" (increase of more than 25,000), then "Passenger in a car, truck or van" (increase of 15,000), and "Walk or jog" (decrease of 12,000).  For "Male / Tāne" the largest change is for "Passenger in a car, truck or van" (increase of more than 16,000), "Walk or jog" (decrease of 13,000), and "Study at home" (increase of just over 10,000).  "Another gender / He ira kē anō" had small increases across the board, but again, the quantity of increase is difficult to determine from this plot.  
+
+Figure \@ref(fig:tedGen) C shows "Female / Wahine" have largest percent change for "Study at home" (increase of nearly 65%), around 20% decrease for "Ferry" and "Train", around 10% decrease for "Walk or jog" and around 8% increase for "Passenger in a car, truck or van".  "Male / Tāne" have largest percent change of 50% increase for "Study at home", 20% decrease for "Ferry" and "Train", around 11% decrease for "Walk or jog" and around 8% increase for "Passenger in a car, truck or van".  "Another gender / He ira kē anō" has high percentage change across all methods of travel, reflecting the inability to compute ratio increase from zero. 
+
+This analysis highlights the importance of the "Passenger in a car, truck or van" category for both "Female / Wahine" and "Male / Tāne" genders.  Similarly the "Walk or jog", "Study at home" and "Drive a car, truck or van" categories appear to be important for both "Female / Wahine" and "Male / Tāne" genders.  Since the gender category "Another gender / He ira kē anō" has no data for 2018 and low counts, it could be consolidated with one of the other gender categories (e.g. "Male / Tāne" & "Another gender / He ira kē anō" to give gender categories: "Female / Wahine" and "Not Female / Wahine").
+
+
+### Main means of travel by educational institution location (region)  
+
+`r knitr::kable(cont_tbl(tvl_to_ed_rc, TED, EDU))`
+
+```{r tedEdu, include=T, fig.cap="Total and changes in 'Main means of travel' and 'Educational institute location (region)' for 2018 and 2023", fig.dim = c(8, 12)}
+two_var_plot(
+  data = tvl_to_ed_rc, 
+  y = VALUE, 
+  x1 = TED, 
+  x2 = EDU, 
+  labs=c("Main means of travel", "educational institute location (region)", "Count"))
+```
+
+Figure \@ref(fig:tedEdu) A shows highest counts for "Auckland Region" in "Passenger in a car, truck or van", "Walk or jog", "Public bus", "Drive a car, tuck or van", then "School bus" and "Study at home".  "Canterbury Region has highest counts for "Passenger in a car, truck or van", followed by "Walk or jog", "Drive a car, truck or van", "Bicycle", "School bus", and then "Public bus".  "Wellington Region" has highest count for "Passenger in a car, truck or van", "Walk or jog", "School bus", "Drive a car, truck or van", "Public bus", "Train", "Bicycle".  
+
+Figure \@ref(fig:tedEdu) B is quite cluttered and analysis is difficult, however notable observations include "Auckland Region" has largest changes in "Passenger in a car, truck or van" (increase of nearly 15,000), "Study at home" (increase of nearly 13,000), decreases of nearly 6,000 for "Walk or jog" and around 3,000 for "Train.  "Canterbury Region" has largest changes for "Passenger in a car, truck or van" (increase of 5,000), "Study at home" (increase just under 5,000). All regions had an increase in "Study at home" and all regions except "Canterbury region" had a decrease in "Walk or jog".    
+
+Figure \@ref(fig:tedEdu) C is also quite cluttered and the only notable observations reinforce the increase across all regions for the "Study at home" category, and near universal decrease in "Walk or jog".
+
+This analysis highlights the importance of the "Passenger in a car, truck or van", "Walk or jog", "Drive a car, truck or van", "Study at home" and "School bus" categories across all regions.  The "Train" category consists almost exclusively of responses from "Auckland region" and "Wellington region", so may be a useful candidate for targeted analysis (e.g. a data set limited to "Auckland region" and "Wellington region").  The "Auckland region" is easily the largest regional category, with nearly three times the number of responses than the next highest region ("Canterbury region") and has a similar amount of responses to the lowest 11 regions combined, making it a reasonable candidate for breaking into smaller groups (i.e. "Territorial Authority and Local Board" level).  Alternatively, some of the smaller regions may be grouped together based on either geographical location, or some other dimension.
+
+
+## Reorganising data  
+
+Based on the initial exploratory analysis, we will make some changes to the structure of our data by consolidating some levels.  The main regroupings are:  
+
+  - "Main means of travel": combine categories "Ferry", "Train", "Bicycle", and "Other", into a new category called "Other"
+  - "Gender": incorporate "Another gender / He ira kē anō" with the "Male / Tāne" category, to give "Female / Wahine" and "Other"
+  - "Age": incorporate "30-64 years" and "65 years and over" into a new category called "30 years and over"
+  - "Educational institute by address (region)": retain all categories initially, but conduct additional analysis at regional levels and further reduce the "Auckland Region" into Territorial Authorities and Local Boards level.
+
+```{r ted_red}
+ted_gen <- tvl_to_ed_rc |>
+  pivot_wider(
+    names_from = GEN,
+    values_from = VALUE
+  ) |>
+  rowwise() |>
+  mutate(
+    Not_female = sum(`Male / Tāne`, `Another gender / He ira kē anō`, na.rm = T) 
+  ) |>
+  select(
+    -`Male / Tāne`,
+    -`Another gender / He ira kē anō`
+  ) |>
+  pivot_longer(
+    cols = c(`Female / Wahine`, `Not_female`),
+    names_to = "GEN",
+    values_to = "VALUE"
+  )
+
+ted_age <- ted_gen |>
+  pivot_wider(
+    names_from = AGE,
+    values_from = VALUE
+  ) |>
+  rowwise() |>
+  mutate(
+    `30 years and over` = sum(`30-64 years`, `65 years and over`, na.rm = T)
+  ) |>
+  select(
+    -`30-64 years`,
+    -`65 years and over`
+  ) |>
+  pivot_longer(
+    cols = c(`Under 15 years`, `15-29 years`, `30 years and over`),
+    names_to = "AGE",
+    values_to = "VALUE"
+  )
+
+ted_reduced <- ted_age |>
+  pivot_wider(
+    names_from = TED,
+    values_from = VALUE
+  ) |>
+  rowwise() |>
+  mutate(
+    `Other mode` = sum(
+      Bicycle, Train, Other, Ferry, 
+      na.rm = T)
+  ) |>
+  select(
+    -Bicycle,
+    -Train,
+    -Other,
+    -Ferry
+  ) |>
+  pivot_longer(
+    cols = c(
+      `Study at home`,
+      `Drive a car, truck or van`,
+      `Passenger in a car, truck or van`,
+      `Other mode`,
+      `Public bus`,
+      `School bus`,
+      `Walk or jog`
+      ),
+    names_to = "TED",
+    values_to = "VALUE"
+  ) |>
+  mutate(
+    YEAR = factor(YEAR) |> relevel(ref = "2018"),
+    AGE = factor(AGE) |> relevel(ref = "Under 15 years"),
+    GEN = factor(GEN) |> relevel(ref = "Female / Wahine"),
+    TED = factor(TED) |> relevel(ref = "Walk or jog"))
+  
+rm(list = c("ted_age", "ted_gen"))
+
+# rebase "Study at Home", 
+# ted_reduced <- factor(ted_reduced$TED) |> relevel(ref = "Study at home")
+# ted_reduced
+ted_reduced |> group_by(YEAR, AGE, TED) |> summarise(VALUE = sum(VALUE))
+
+```
+
+Reviewing the same plots of paired predictors based on the new data:  
+
+### Main means of travel and age  
+
+
+```{r tedAgeReduced, include = T, fig.cap= "Main means of travel by age, reduced age groups and means of travel categories"}
+two_var_plot(
+  data = ted_reduced, 
+  y = VALUE, 
+  x1 = TED, 
+  x2 = AGE, 
+  labs=c("Main means of travel", "age", "Count"))
+```
+
+
+### Main means of travel and gender
+
+```{r tedGenReduced, include = T, fig.cap= "Main means of travel by gender, reduced gender and means of travel categories"}
+two_var_plot(
+  data = ted_reduced, 
+  y = VALUE, 
+  x1 = TED, 
+  x2 = GEN, 
+  labs=c("Main means of travel", "gender", "Count"))
+```
+
+
+### Main means of travel and educational institute location (region)
+
+```{r tedEduReduced, include = T, fig.cap= "Main means of travel by educational institute location, reduced means of travel categories", fig.dim = c(8, 12)}
+two_var_plot(
+  data = ted_reduced, 
+  y = VALUE, 
+  x1 = TED, 
+  x2 = EDU, 
+  labs=c("Main means of travel", "educational institute location (region)", "Count"))
+```
+
+
+```{r}
+xtabs(VALUE ~ YEAR+TED, ted_reduced)
+```
+
+`r knitr::kable(xtabs(VALUE ~ YEAR+TED+AGE, ted_reduced))`
+
+# STILL LOTS OF VARIABILITY
+
+Even after consolidating levels of several predictor variables, we are still unable to develop well fitted models.  This may be due to a wide range of infrastructure and options for transport across different regions (for instance, almost all of the responses for "Train" were from "Auckland Region" and "Wellington Region").  One approach for reducing the level of variability is to focus on smaller locations that, presumably, share the same infrastructure and modes of transport.  With our existing data, we can focus on modelling at individual regional levels, or we can extract new data for smaller regional groups. To do this we can request data from the Aotearoa Data Explorer API that includes (or in our case, focusses on) data at a smaller geographical level, such as Local Board (for Auckland), District, or City levels
+
+The Auckland region is made up of several District- or City-sized, called Local Boards, and these need to be retrieved separately from the Aotearoa Data Explorer API, so the next sections will look at different regions within our existing data sets.
+
+
+
+## Canterbury Region
+
+```{r cntbry, include = T, fig.cap= "Canterbury: Main means of travel by gender"}
+# visualise Data for the Canterbury region
+# limit data to Canterbury
+ctby <- ted_reduced |>
+  dplyr::filter(
+    EDU == "Canterbury Region"
+  )
+
+two_var_plot(
+  data= ctby,
+  y = VALUE, 
+  x1 = TED, 
+  x2 = AGE, 
+  labs=c("Main means of travel", "age", "Count"))
+
+
+```
+
+
+
+# Fitting models:   
+
+```{r fn_fit_glm}
+# create function to fit model, print summary, print coefs exp, and GoF
+fitting <- function(y, x, df){
+  f <- substitute(glm(y~x,
+             data = df,
+             family = "poisson"))
+  mod <- eval(f)
+  
+  coeffs <- mod |> coef() |> exp() |> round(digits =2)
+  
+  Gof <- 1-pchisq(mod$deviance, mod$df.residual)
+  
+  return(list(model=mod, exp_coef = coeffs, Gof = Gof))
+
+}
+
+```
+
+The census data represents a count of responses to the census question "What was your main means of travel to education?".  The question has been asked in the 2018 and 2023 census questionnaires and provides for 10 possible responses, with that can be summarised across several independent variables:  Age, Educational institution address, Gender, and Census Year.  Each of these independent variables can be used as a predictor in a regression model, either individually or in combination.  
+
+For this study, the response variable is the observed count ("OBS_VALUE") of responses for a particular means of travel.  Since we are modelling count data, we will use poisson regression to understand any relationships between our variables.  We will look at XXXXXXXXX models:  
+
+  - mutual independence: variables are independent of each other
+  - 
+
+$$ln(\lambda)= \beta_0 + \sum \beta_i x_i, y \sim \text{pois}(\lambda)$$
+```{r fit_reduced, include = T}
+# fit three way interaction: AGE YEAR TED
+AT_YT <- glm(
+  VALUE ~ AGE*TED+YEAR*TED,
+  data = ted_reduced,
+  family = "poisson"
+)
+summary(AT_YT)
+exp(coef(AT_YT)) |> round(digits = 2)
+```
+
+
+
+
+
+### Fit a model with no interaction
+
+This model includes all predictors, with no interaction between predictors.  This model considers the effect of each predictor on the count 
+
+```{r fitNoInteractions, include=T}
+# all predictors no interaction
+Y_A_G_R_T <- fitting(y = VALUE, 
+                     x= YEAR+AGE+GEN+EDU+TED,
+                     df = tvl_to_ed_rc)
+
+```
+
+
+### Interaction between Year Main means of travel
+
+This model ignores the location of educational institute and looks at the interaction between Age and Main means of travel to education and the interaction between Gender and Main means of travel to education.
+
+
+```{r fitYT, include=T}
+# Year, Age:means of travel, Gender:means of travel
+YT <- fitting(y=VALUE, x=YEAR*TED,
+            df = tvl_to_ed_rc)
+
+```
+
+
+### Interaction between Age, means of travel and Gender, means of travel
+
+This model ignores the location of educational institute and looks at the interaction between Age and Main means of travel to education and the interaction between Gender and Main means of travel to education.
+
+
+```{r fitYear_AT_GT}
+# Year, Age:means of travel, Gender:means of travel
+Y_AT_GT <- fitting(y=VALUE,
+                   x = YEAR+AGE*TED+GEN*TED,
+            df = tvl_to_ed_rc)
+```
+
+### Interaction between Year Age, means of travel and Year Gender, means of travel
+
+This model ignores the location of educational institute and looks at the three way interaction between Year Age and Main means of travel to education and the three way interaction interaction between Year Gender and Main means of travel to education.
+
+
+```{r fitYear_YAT_YGT}
+# Year, Age:means of travel, Gender:means of travel
+YAT_YGT <- fitting(y = VALUE,
+                   YEAR*AGE*TED+YEAR*GEN*TED,
+                   df = tvl_to_ed_rc)
+```
+
+These models have significant interactions, but these models do not appear to fit the data well.  We can try a couple of approaches:  
+
+  - reduce the number of cells in our table by summarising some factors (e.g. summarise data along the "Gender" and "location of educational institution" dimensions)
+  - 
+
+### interaction between Age and Main means of travel
+
+This model considers the interaction between Main means of travel and age group
+
+```{r fitYear_AT}
+# Year, Age:means of travel, Gender:means of travel
+AT <- fitting(y = VALUE,
+              x = AGE*TED,
+              df = tvl_to_ed_rc)
+```
+### Model: $\log(\text{Count}) = \lambda_{year} + \lambda_{tvl}$  
+
+Fitting the model that has the "count" of responses as the response variable and "Census Year" and "Main means of travel to education" as the predictor variables shows that all responses are significant.  
+
+
+
+
+```{r fit_Y_T, include = T}
+# fit the model with no interaction to the summarised data (Y+T)
+TED_Y_T <- glm(VALUE~YEAR+TED,
+               family = "poisson",
+               data = tvl_to_ed_rc)
+summary(TED_Y_T)
+```
+
+The model with no interaction predicts that the odds of travel to education as "Passenger in a car, truck or van" is 12.8 times the odds of travelling by "Bicycle" accounting for year.  Similarly, the odds of "Walking or jogging" are 6.1 times the odds of travelling by "Bicycle", accounting for the year.  The odds of responding in 2023 are 1.06 times higher than the odds of responding in 2018, indicating that the number of responses increased by 6% in 2023.  
+
+```{r coef_Y_T, include = T}
+# exponentiate coefficients for odds ratios, reference: YEAR=2018; TED="Bicycle"
+TED_Y_T |> coef() |> exp() |> sort(decreasing = T) |> round(digits = 2)
+```
+
+However, this model does not adequately fit the data, so we consider further consolidating the travel to education data by reducing the number of levels.  We can aggregate by "Private vehicle" ("Passenger in..." or "Drive a car, truck or van"), "Public transport" ("Public bus", "School bus", "Train", "Ferry", "Other"), "Study at home", "Self-powered" ("Bicycle" and "Walk or jog").
+
+```{r grouped_VBSS}
+# # # group data into new categories:
+# VBSS <- tvl_to_ed_rc |>
+#   tidyr::pivot_wider(id_cols = YEAR, names_from = TED, values_from = VALUE) #|> 
+#   mutate(
+#     PVT = `Passenger in a car, truck or van` + `Drive a car, truck or van`,
+#     PUB = Ferry + Other + Train + `Public bus` + `School bus`,
+#     SELF = Bicycle + `Walk or jog`,
+#     HM = `Study at home`
+#     ) |>
+#   select(YEAR, PVT, PUB, SELF, HM) |>
+#   tidyr::pivot_longer(cols = c(PVT, PUB, SELF, HM), names_to = "TED_G", values_to = "VALUET") |>
+#   mutate(TED_G = factor(TED_G, levels = c("HM", "SELF", 'PVT', "PUB")))
+# 
+# TEDG_Y_T <- glm(VALUE~YEAR+TED_G,
+#                 family = "poisson",
+#                 data = VBSS)
+# 
+# summary(TEDG_Y_T)
+# TEDG_Y_T |> coef() |> exp() |> sort(decreasing = T) |> format(scientific = F, nsmall =1, digits=1)
+```
+
+This model predicts that the odds of travel by private means is 7.2 times the odds of studying at home, across all years.  The model predicts that the odds of "self-powered" travel (i.e. "walk or jog", or "bicycle") are 3.2 times the odds of studying at home, while the odds of travelling by some form of public transport are 3.0 times the odds of studying at home.  Again, although all of the predictors appear to be statistically significant, but the model does not fit the data well.
+
 
