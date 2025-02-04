@@ -1,0 +1,526 @@
+---
+title: "Travel to work and education"
+subtitle: "Comparing 'travel to work' and 'travel to education' census data for 2018 and 2023"
+author: 'Chad Kakau: 300212228'
+date: "`r Sys.Date()`"
+output:
+  
+  bookdown::pdf_document2:
+  bookdown::html_document2:
+    fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE, error = FALSE, warning = FALSE)
+
+library(httr2)
+library(plotly)
+library(dplyr) # try without importing library and create functions to use
+library(tidyr) # separate_wider_delim, pivot_longer, pivot_wider
+library(purrr)
+library(xml2)
+library(ggplot2)
+library(cowplot) # plot_grid
+library(stringr) # only used for one function
+library(readr) # only used for one function "read_csv(col_types) = 'cccccc")
+library(knitr) # kable
+
+
+api_ade_auth_key <- "5dc60d5341c3446690edc70c8bdf67ab"
+stats_shapefiles_key <- "92c010068afb47089f76501613231717" 
+```
+
+```{r base_path, echo=FALSE, include=FALSE}
+base_path <- request("https://apis.stats.govt.nz/ade-api/rest") %>%
+  req_headers(
+    `Ocp-Apim-Subscription-Key`= api_ade_auth_key,
+    .redact = "Ocp-Apim-Subscription-Key",
+    `Cache-Control` = 'no-cache',
+    `accept-encoding` = 'identity'
+  )
+```
+
+
+```{r fn_extract_dimensions}
+# function to extract dimensions 
+extract_dimensions <- function(resp){
+  
+  # retrieve Travel to Education dimension names
+  dims <- resp |>
+    pluck("Structure", "Structures", "Codelists") |>
+    purrr::map_dfr(
+      \(x) {
+        tibble(
+          CL =  x |> attr("id") |> strsplit(split = "CL_") |> pluck(1, 2),  
+          dimension = x |>  pluck("Name", 1))}) 
+  
+  # extract code and decodes for levels in Travel to Education dimensions
+  tables <- map(resp$Structure$Structures$Codelists,
+                   \(x) {purrr::map_dfr(x,\(y) {
+                           list(
+                             level = y |> pluck("Name", 1),
+                             code = y |>  attr("id"))})})
+                              
+  # rename tables to dimensions
+  names(tables) <- dims$dimension
+
+return(list(dimensions = dims, structure = tables))
+}
+```
+
+
+```{r fn_info_about_data}
+# function to retrieve information about data
+ade_api_info_about_data <- function(resourceId = "CEN23_TRA_001") {  
+  
+  # set parameters
+  flowRef <- resourceId
+  key <- "all"
+  
+  # construct request
+  req <- base_path |>
+    req_url_path_append("availableconstraint") |>
+    req_url_path_append(flowRef) |>
+    req_url_path_append(key) |>
+    req_url_query(
+      mode = "exact",
+      references = "codelist")
+  
+  # preview the request
+  # req_dry_run(req)
+  
+  # perform request
+  resp <- req_perform(req) 
+  
+  data <- resp |>
+  resp_body_xml() |>
+  as_list()
+  
+  data_dimensions <- extract_dimensions(data)
+  
+  return(data_dimensions)
+  
+}
+```
+
+
+```{r fn_ade_api_data_by_key}
+# function for retrieving data
+ade_api_data_by_key <- function(key, resourceId = "CEN23_TRA_001") {
+  
+  # request "information about data" from ADE-API
+  struc <- ade_api_info_about_data(resourceId = resourceId)
+  
+  # create parameters for data query
+  flowRef <- paste('STATSNZ', resourceId ,'1.0', sep = ",") 
+  key <- key
+
+  req <- base_path |>
+    req_url_path_append('data') |>  
+    req_url_path_append(flowRef) |>
+    req_url_path_append(key) |>
+    req_url_query(
+      format = 'csv',
+      detail = "full"
+    )
+  
+  # output the request for the user
+  # req_dry_run(req)
+  
+  # send the request and save the response
+  resp <- req_perform(req)
+  
+  # convert the response to something readable
+  data <- resp |>
+    resp_body_string() |>
+    readr::read_csv(col_types = "cccccc") #|>
+  
+  
+  # remove first (DATAFLOW) and last (OBS_STATUS) columns
+  data_length <- length(names(data))
+  data <- data |> select(-1, -data_length)
+  
+  # create vector of shortened names for columns
+  nms <- names(data) |> tibble() |> tidyr::separate_wider_delim(
+    cols = "names(data)",
+    delim = "_",
+    names = c(NA, "dim", NA),
+    too_few = "align_start",
+    too_many= "drop"
+    )
+  
+  # update names of data frame
+  names(data) <- nms[[1]]
+  
+  # sort column names in alphabetical order to match data output
+  no_val <- nms[[1]][-(data_length-2)]
+  sorted_nms <- order(no_val, decreasing = F, method="auto")
+  
+  # reorder columns in data frame
+  data <- data |>
+    select(
+      sorted_nms, 
+      VALUE
+     )
+  # create df for merging data
+  df <- map2(data[,1:5],
+     struc$structure,
+     \(x, y){
+       # create a tibble to give a colname for referencing in inner_join
+       x <- tibble(xname=x)
+       # merge columns
+       inner_join(x, y, by = join_by(xname == y$code))|>
+    # retain text description
+    select(level)
+     }) |>
+    # lift nested list
+    purrr::map_dfr(\(x) x |> pluck(1)) 
+  
+  
+  # re-attach observed values
+  df <- cbind(df, data[,6])
+  
+  return(df)
+
+}
+
+```
+
+```{r fn_retrieve_api_codes}
+
+retrieve_api_codes <- function(df, pattern, excl = NULL, lvl = level, digits = FALSE){
+  
+  out <- df %>%
+    dplyr::filter(str_detect({{lvl}}, pattern)) 
+  
+  # remove exclusions
+  if (!is.null(excl)) {
+    out <- out %>% filter(!str_detect({{lvl}}, excl))
+  }
+  
+  # limit to required length
+  if (digits) {
+    out <- out %>% filter(str_length(code) == digits)
+  }
+  
+  # collapse code output
+  out <- out %>%
+    select(code) %>%
+    unlist() %>%
+    paste(collapse = "+")
+  
+  return(out)
+}
+```
+
+
+```{r key_tbt}
+# retrieve information about the totals by topic so we can set up filters for future queries
+all_dims <- ade_api_info_about_data(resourceId = "CEN23_TBT_008") # this for everything
+
+# all_dims$dimensions # includes Area, Variable codes, Census Year, can be used to filter to key variables and codes
+# e.g. all_dims$structure$Area |> filter(str_detect(level, "Region")), will filter Areas that contain "Region"
+rgn <- retrieve_api_codes(all_dims$structure$Area,
+                          pattern = "Region",
+                          excl = "ceani|nlet|sland|orther|entra",
+                          lvl = level)
+
+# shortcut to variable codes
+var_df <- all_dims$structure$`Variable codes`
+
+# modes of travel: to education begins with "te" and to work begins with "tw", "u" relates to "usual residence"
+tvl <- retrieve_api_codes(var_df,
+                          pattern = "^teu|^twu",
+                          lvl = code)
+
+
+# age groups: code begins with "as" and has total 4 digits - results in 5 year age groups
+age <- retrieve_api_codes(var_df,
+                          pattern = "^as",
+                          lvl = code,
+                          digits = 4)
+  
+# gender groups
+gen <- retrieve_api_codes(var_df,
+                          pattern = "^ge",
+                          lvl = code,
+                          digits = 3)
+  
+# years ... just fill this one in directly
+year <- "2018+2023" # all years
+
+# combine all codes for output
+tbt_key <- paste(year, rgn, age, gen, sep=".")
+
+rm(var_df)
+rm(all_dims)
+```
+
+
+```{r key_tee}
+# retrieve information about the totals by topic so we can set up filters for future queries
+tee_dims <- ade_api_info_about_data(resourceId = "CEN23_TRA_001") # this for everything
+
+# all_dims$dimensions # includes Area, Variable codes, Census Year, can be used to filter to key variables and codes
+# e.g. all_dims$structure$Area |> filter(str_detect(level, "Region")), will filter Areas that contain "Region"
+rgn <- retrieve_api_codes(tee_dims$structure$`Educational institution address`,
+                          pattern = "Region",
+                          excl = "ceani|nlet|sland|orther|entra|utsi",
+                          digits = 2,
+                          lvl = level)
+
+
+# modes of travel: to education begins 0 and has three digits
+tvl <- retrieve_api_codes(tee_dims$structure$`Main means of travel to education`,
+                          pattern = "^0",
+                          digits = 3,
+                          lvl = code)
+
+# age groups: code begins with "0" or "1" and has total 2 digits - results in 5 year age groups
+age <- retrieve_api_codes(tee_dims$structure$Age,
+                          pattern = "^0|^1",
+                          lvl = code,
+                          digits = 2)
+  
+# gender groups: contains 1, 2, 3 results in Male Female Another
+gen <- retrieve_api_codes(tee_dims$structure$Gender,
+                          pattern = "[123]",
+                          lvl = code)
+  
+# years ... just fill this one in directly
+year <- "2018+2023" # all years
+
+
+# travel to work has different travel modes
+two_dims <- ade_api_info_about_data(resourceId = "CEN23_TRA_003")
+two_tvl <- retrieve_api_codes(two_dims$structure$`Main means of travel to work`,
+                              pattern = "^0",
+                              digits = 3,
+                              lvl = code)
+
+# combine all codes for output
+tee_key <- paste(year, rgn, tvl, age, gen, sep=".")
+two_key <- paste(year, rgn, two_tvl, age, gen, sep=".")
+
+# clean the environment
+rm(list = c("tee_dims", "two_dims", "two_tvl"))
+
+```
+
+```{r data_by_key_tee_and_two}
+# extract data by key for main means of travel to education
+tee <- ade_api_data_by_key(key = tee_key, resourceId = "CEN23_TRA_001")
+# rename columns for consistency
+names(tee) <- c("Age", "Location", "Gender", "Travel_mode", "Year", "Value") #AGE EDU GEN TED YEAR VALUE
+
+# extract corresponding data by key for main means of travel to work
+two <- ade_api_data_by_key(key = two_key, resourceId = "CEN23_TRA_003")
+# rename columns for consistency 
+names(two)<- c("Age", "Gender", "Travel_mode", "Location", "Year", "Value")#AGE GEN TWO WOA YEAR VALUE
+```
+
+# Introduction  
+
+This document provides analysis of Statistics New Zealand's transport related census data, focussing on two questions in the census:  
+
+  - What was your main means of travel to education? and 
+  - What was your main means of travel to work.
+  
+Methods of travel to work have long been of interest as having both cause and effect roles in estimating economic performance.  Since 2018, the "travel to education" question has been included in the census as a means of quantifying the effect of education on the transport sector.  This analysis will review the census responses for these two transport-related questions...
+
+# Document layout  
+
+This document begins by introducing some considerations about the nature and quality of census data before moving into exploratory analysis procedures:  
+
+  - Data descriptions 
+  - Basic visualisations
+  - Modelling relationships and associations
+
+# upfront findings section  
+
+This section should include a summary of key findings
+
+# Considerations for the reader  
+
+Prior to conducting analysis, it is worth noting three observations/facts:
+
+  - Although census data can be seen as a population-level survey, the questions are tightly contextualised, and for the purposes of the questions of interest in this document, responses must be viewed as a snapshot in time, taken on the day of the census;
+  - Census data includes populations of interest, that is, not every question relates to every respondent.  For example, questions about time since arriving in New Zealand will only be relevant for people who have arrived from overseas.  Similarly, responses for driving to place of education don't make sense for people aged less than 15 years, since a person must be 16 years or older to legally drive in New Zealand.
+  - Census questions and categories can change over time and that can make time-series comparisons difficult or impossible.  For instance, the "travel to education" question was introduced in 2018 meaning the only data available is for 2018 and 2023.  Similarly, the gender grouping "Another gender / He ira kē anō" was introduced in 2023 and can't be compared to data from an earlier census.  
+
+
+## Further constraints of the data  
+
+Statistics New Zealand has released census data in a variety of structures, including:  
+
+  - Main means of travel to work by place of work
+  - Main means of travel to education by address of educational institution  
+
+These data should be viewed as relating to the destination of travel, that is the responses are grouped by workplace, office, school, university location etc. to which the respondent was travelling.  Statistics New Zealand expects to release further categorisations of data in 2025, including these responses grouped by place of usual residence, that is the origin of the travel to work or education.  
+
+# Analysis  
+
+This analysis covers two data sets:  
+
+  - "Main means of travel to education, by educational institution address" (TED), and
+  - "Main means of travel to work, by workplace address" (TWO).  
+
+## Comparing and contrasting the data
+
+These data share commonly defined elements:  
+
+  - Age:  the age group of respondents, this analysis includes five-year groupings (e.g. 0-4 years, 5-9 years etc.)
+  - Gender:  the gender of the respondent, a new addition for the 2023 census
+  - Main means of travel:  the main means of travel the respondent used to get to place of work or education
+  - Location:  the location of the educational institution or place of work, this analysis includes groupings by Region (e.g. "Wellington Region", "Northland Region" etc.)
+  - Year:  the census year in which the response was collected.
+
+Although the TED and TWO data share characteristics and features, there are some fundamental differences that are discussed next.  
+
+### Structure of the TED and TWO data  
+
+For each dataset, one row comprises a unique record across all five category columns, so the total number of rows is a function of the number of unique levels in each category: 
+
+`r knitr::kable(tee |> select(-Value) |> summarise_all(n_distinct), caption = "TED: Count of levels in each category", label = "tee-count")`
+
+Thus the total number of rows for the TED data set is the product of the counts of distinct values in each category: `r tee |> select(-Value) |>summarise_all(n_distinct) |> paste(collapse="x")` = `r nrow(tee)`.  Similarly the total number of rows for the TWO data, following the same procedure, is also the product of the counts of distinct values in each category: `r two |> select(-Value) |>summarise_all(n_distinct) |> paste(collapse="x")` = `r nrow(two)`.
+
+`r knitr::kable(two |> select(-Value) |> summarise_all(n_distinct), caption = "TWO: Count of levels in each category", label = "two-count")`
+
+Note that the TWO data has fewer distinct levels for Age and more distinct levels for Travel_mode.  The "Main means of travel to work" category is actually the "Main means of travel to work (15 years of age and over)" and as such, excludes the age categories "0-4 years", "5-9 years" and "10-14 years".  
+
+`r knitr::kable(sort(unique(tee$Travel_mode)), col.names = "Modes of travel to education", caption = "TED: travel modes", label = "teeModes")` 
+
+Both TED and TWO data include:  "Bicycle", "Ferry", "Other", "Public bus", "Train", and "Walk or jog".  The most obvious mode that is unique to the TED data is "School bus" (see Table \@ref(tab:teeModes) ).  The TED data also includes: "Drive a car, truck or van", "Passenger in a car, truck or van", and "Study at home".  The TWO data (Table \@ref(tab:twoModes) ) includes corresponding modes, modified for the context, splitting driving a vehicle into: "Drive a company car, truck or van" and "Drive a private car, truck or van"; and expanding the passenger category to: "Passenger in a car, truck, van or company bus".  The TWO data also distinguishes the non-travelling mode into: "Did not go to work today" and "Work at home".
+
+`r knitr::kable(sort(unique(two$Travel_mode)), col.names = "Modes of travel to work", caption = "TWO: travel modes", label = "twoModes")`  
+
+## Basic statistics  
+
+### Main means of travel to education  
+
+The TED data has `r nrow(tee)` rows across `r ncol(tee)` columns, with the "Value" column representing the count of observations for a given row.  
+
+`r knitr::kable(tee |> select(Value) |> summary(), col.names = "TED: Value", caption = "Summary of Value column for TED data", label = "teeValSum")`  
+
+Table \@ref(tab:teeValSum) shows that most counts in the "Value" column are reasonably low with the minimum and first quantile at 0, the median at `r median(tee$Value,na.rm = T)`, the third quantile at `r stats::quantile(tee$Value, probs = 0.75, na.rm = T)` and the mean at `r round(mean(tee$Value,na.rm = T),1)`.  The TWO data has a maximum value of `r format(max(tee$Value,na.rm = T), nsmall = 0)` and over 4,000 NA observations.  
+
+```{r histTee, include=TRUE, fig.show='hold',fig.cap="Histograms for 'Main means of travel to education counts'"}
+par(mfrow = c(1, 2))
+
+hist(tee$Value, main = "Histogram - full", xlab = "Value", breaks = 30)
+hist(tee$Value, ylim = c(0, 30), main= "Highlight high counts", xlab = "Value", breaks = 30)
+par(mfrow = c(1, 1))
+```
+
+If we plot the "Value" column as a histogram (see Figure \@ref(fig:histTee) ), we see that the vast majority of counts are on the low end and we have to zoom right in to the lowest frequencies to discern counts higher than 5,000, which are vary rare.
+
+On further examination, Figure \@ref(fig:teeDot) shows the highest values in the TED data (i.e. >10,000) are mostly in the Auckland Region, for the "Passenger in a car, truck or van" and "Walk or jog" modes of travel.  A handful of high values occur in Canterbury Region and Waikato Region, both for mode "Passenger in a car, truck or van"
+
+```{r teeDot, include = TRUE, fig.dim=c(7, 4), fig.cap="Travel to education: values by location" }
+# create a scatter plot to show the distribution of highest values
+ggplot(data = tee) +
+  geom_point(position = position_jitterdodge(),
+             aes(x = factor(Location), 
+                 y = Value, 
+                 colour = Travel_mode, 
+                 text = Value))  +
+  coord_flip()+
+  labs(title = "Travel to education values by location",
+       y = "Value", x = "Location") +
+  theme(legend.position = c(0.7, 0.6))
+
+```
+
+
+### Main means of travel to work
+
+The TWO data has `r nrow(two)` rows across `r ncol(two)` columns, with the "Value" column again representing the count of observations for a given row. 
+
+`r knitr::kable(two |> select(Value) |> summary(), col.names = "TWO: Value", caption = "Summary of Value column for TWO data", label = "twoValSum")`
+
+As with the TED data, Table \@ref(tab:twoValSum) shows that most counts in the "Value" column are quite low with the minimum and first quantile at 0, the median at `r median(two$Value,na.rm = T)`, the third quantile at `r stats::quantile(two$Value, probs = 0.75, na.rm = T)` and the mean at `r round(mean(two$Value,na.rm = T),1)`.  The TWO data has a maximum value of `r format(max(two$Value,na.rm = T), nsmall = 0)` and over 5,000 NA observations.  
+
+```{r histTwo, include=TRUE, fig.show='hold',fig.cap="Histograms for 'Main means of travel to work counts'"}
+par(mfrow = c(1, 2))
+
+hist(two$Value, main = "Histogram - full", xlab = "Value", breaks = 30)
+hist(two$Value, ylim = c(0, 30), main= "Highlight high counts", xlab = "Value", breaks = 30)
+par(mfrow = c(1, 1))
+```
+
+If we plot the "Value" column as a histogram (see Figure \@ref(fig:histTwo) ), we see that the vast majority of counts are on the low end and again we have to zoom right in to the lowest frequencies to discern higher counts.
+
+Figure \@ref(fig:twoDot) shows the highest values in the TWO data (i.e. >10,000) are again mostly in the Auckland Region, for the "Drive a private car, truck or van" and "Work at home" modes of travel.  A handful of high values occur in Canterbury Region for mode "Drive a private car, truck or van".
+
+```{r twoDot, include = TRUE, fig.dim=c(7, 4), fig.cap="Travel to work: values by location" }
+# create a scatter plot to show the distribution of highest values
+ggplot(data = two) +
+  geom_point(position = position_jitterdodge() ,
+             aes(x = factor(Location), 
+                 y = Value, 
+                 colour = Travel_mode, 
+                 text = Value))  +
+  coord_flip()+
+  labs(title = "Travel to work values by location",
+       y = "Value", x = "Location") +
+  theme(legend.position = c(0.7, 0.6))
+
+```
+
+## Modes of travel with extremely high counts
+
+Figures \@ref(fig:teeDot) and \@ref(fig:twoDot) both show extremely high counts in the Auckland Region for "Passenger in a car, truck or van" and "Walk or jog" for TED data and for "Drive a private car, truck or van" and "Work at home" for the TWO data.  The Auckland Region includes several urban areas that used to be recognised as cities in their own right, but are currently captured within Statistics New Zealand's Auckland Region geographic definition.  The Auckland Region includes a population of over 1.5 million people, which is more than the next three most populous regions combined (Canterbury, Waikato, Wellington).  As such, high counts can be expected, although they may skew the analysis (recall the high mean Value for both data sets).  There are two possible methods for treating these issues of scale:  
+
+  - use proportions for analysing mode share usage within regions in order to make reasonable comparisons
+  - disaggregate the Auckland Region into its component geographies by dividing into Auckland Local Board groupings.  
+
+Using proportions allows comparison between regions by adjusting for population size and provides an insight into preferences that may differ by region.  While proportions analysis allows for comparison between regions, consideration must (eventually) be given to the underlying population size, lest strong preferences of a small population mask weaker preferences of a much larger portion of the population.
+
+Disaggregation to Local Board level increases the number of geographic areas for consideration and therefore the complexity, but it also provides for more granular analysis and potentially balances population size between other regions.   
+
+## Travel to education and travel to work, by Region  
+
+```{r fn_prop_bar}
+# create ggplot
+prop_bar <- function(df, df_lab, x, x_lab, fill, fill_lab){
+  plt <- ggplot(data = df) +
+    geom_bar(position = "fill",
+             stat = "identity",
+             aes(y = Value, 
+                 x = {{x}},
+                 fill = {{fill}})
+             ) +
+    labs(title = paste(fill_lab, df_lab, "by", x_lab)) +
+    ylab("Proportion") +
+    coord_flip()
+  
+  return(plt)
+}
+```
+
+We can view the proportions of responses by region using a visual plot that considers the total number of responses within a region as 100% and the sum of responses for a particular mode of travel divided by the total as the proportion.  Figure \@ref(fig:propTED) shows a preference across all regions for "Passenger in a car, truck or van", "Walk or jog", "Drive a car, truck or van", and then "School bus" and "Study at home".  This shows that regardless of region, "Passenger in a car, truck or van" is the preferred means of travel to education, followed by "Walk or jog".  
+
+```{r propTED, include = T, fig.cap= "Travel to education:  proportional modes of travel, by Region"}
+# proportion bar chart for travel to education by region
+prop_bar(df = tee, 
+         df_lab = "to education",
+         x = Location, 
+         x_lab = "Region",
+         fill = Travel_mode, 
+         fill_lab = "Mode of travel")
+```
+
+Figure \@ref(fig:propTWO) shows proportions for modes of travel to work, with a clear preference for "Drive a private car, truck or van", followed by "Work at home" and then "Drive a company car, truck or van.  These preferences are consistent across all regions.  
+
+```{r propTWO, include = T, fig.cap= "Travel to work:  proportional modes of travel, by Region"}
+# proportion bar chart for travel to work by region
+prop_bar(df = two, 
+         df_lab = "to work",
+         x = Location, 
+         x_lab = "Region",
+         fill = Travel_mode, 
+         fill_lab = "Mode of travel")
+```
+
+
