@@ -11,7 +11,12 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, include = FALSE, error = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = FALSE,
+                      include = FALSE, 
+                      error = FALSE, 
+                      warning = FALSE,
+                      fig.dim = c(8, 4),
+                      fig.pos = "h")
 
 library(httr2)
 library(plotly)
@@ -307,16 +312,217 @@ rm(list = c("tee_dims", "two_dims", "two_tvl"))
 
 ```
 
+```{r fn_shorter_modes}
+# function to reduce length of location names and modes of travel
+shorter_modes <- function (df){
+  df <- df|> mutate(
+  Location = str_remove(Location, " Region"),
+  Travel_mode = case_when(
+    str_detect(Travel_mode, "asseng") ~ "Passenger",
+    str_detect(Travel_mode, "ome") ~ "At home",
+    str_detect(Travel_mode, "rive a com") ~ "Company vehicle",
+    str_detect(Travel_mode, "rive a ca|rive a pri") ~ "Private vehicle",
+    str_detect(Travel_mode, "Did not go") ~ "No work",
+    
+    TRUE ~ Travel_mode)
+)
+  return(df)
+}
+```
+
+```{r fn_prop_bar}
+# create ggplot
+prop_bar <- function(df, df_lab, x, x_lab, fill, fill_lab){
+  df <- df |> 
+    group_by(Location, Travel_mode) |> 
+    summarise(Value = sum(Value, na.rm = T),
+              .groups = "keep")
+  
+  plt <- ggplot(data = df) +
+    geom_bar(position = "fill",
+             stat = "identity",
+             aes(y = Value, 
+                 x = {{x}},
+                 fill = {{fill}})
+             ) +
+    labs(title = paste(fill_lab, df_lab, "by", x_lab)) +
+    ylab("Proportion") +
+    coord_flip()
+  
+  return(plt)
+}
+```
+
+
+```{r fn_wrapped_regions}
+# use facet grid to view all modes of travel to education
+wrapped_regions <- function(df, suppress_legend = FALSE) {
+  
+  # summarise Values
+  df <- df |> 
+    group_by(Location, Travel_mode) |> 
+    summarise(Value = sum(Value, na.rm = T),
+              .groups = "keep")
+  
+  # create plot
+  plt <- ggplot(data = df,  
+       aes(fill = Travel_mode,
+           y = Value,
+           x = Travel_mode)
+       ) +
+  geom_col(
+    position = "dodge",
+    stat = "summary",
+    fun = sum
+    ) +
+  facet_wrap(~Location) +
+  scale_y_continuous(labels = function(x) paste(x/1000, "K")) +
+  theme(
+    legend.position = {if (suppress_legend) "none" else "right"}, 
+    axis.text.x = element_blank()
+    )
+  
+  return(plt)
+}
+```
+
+```{r fn_wrapped_years}
+# use facet grid to view all modes of travel to education
+wrapped_years <- function(df, suppress_legend = FALSE) {
+  # summarise Values
+  df <- df |> 
+    group_by(Location, Travel_mode, Year) |> 
+    summarise(Value = sum(Value, na.rm = T),
+                        .groups = "keep")
+  # create plot
+  plt <- ggplot(data = df,  
+       aes(fill = Travel_mode,
+           y = Value,
+           x = Travel_mode)
+       ) +
+  geom_col(
+    position = "dodge",
+    stat = "identity",
+    ) +
+  facet_grid(cols =vars(Location), rows = vars(Year)) +
+  scale_y_continuous(labels = function(x) paste(x/1000, "K")) +
+  theme(
+    legend.position = {if (suppress_legend) "none" else "right"}, 
+    axis.text.x = element_blank(),
+    )
+  
+  return(plt)
+}
+```
+
+
+```{r fn_changes}
+
+changes <- function(df, differential, pct = FALSE) {  
+  # calculate absolute and pct change
+  df <- df |> 
+    group_by(Location, Travel_mode, Year) |> 
+    summarise(Value = sum(Value, na.rm =T),
+              .groups = "keep") |>
+    pivot_wider(id_cols = c(Location, Travel_mode), 
+                names_from = Year,
+                values_from = Value) |>
+    mutate(difference = `2023` - `2018`,
+           pct_chg = difference/`2018`)
+  
+  # label switch
+  if(pct){
+    labels_ <- function(x) paste(x*100, "%", sep = "")
+    ylab_ <- "% change 2018 to 2023"
+  } else{
+    labels_ <- function(x) paste(x/1000, "K", sep = "")
+    ylab_ <- "total change 2018 to 2023"
+  }
+  
+  # create plot
+  plt <- ggplot(data = df, aes(x = Travel_mode)) +
+    geom_point(
+      shape = 21,
+      aes(y = 0),
+      colour = "orange"
+    ) + 
+    geom_point(
+      aes(y = {{differential}},
+          colour = Travel_mode),
+      ) +
+    geom_segment(
+      aes(
+        y = 0,
+        yend = {{differential}},
+        colour = Travel_mode),
+      ) +
+    labs(
+      y = ylab_
+    ) +
+    scale_y_continuous(labels = labels_) +
+    theme(axis.text.x = element_blank())+
+    facet_grid(cols = vars(Location), 
+    )
+ return(plt)
+}
+```
+
+```{r fn_new_changes}
+# 
+# new_changes <- function(df, differential, pct = FALSE) {  
+#   # calculate absolute and pct change
+#   df <- df |> 
+#     group_by(Location, Travel_mode, Year) |> 
+#     summarise(Value = sum(Value, na.rm =T),
+#               .groups = "keep") |>
+#     pivot_wider(id_cols = c(Location, Travel_mode), 
+#                 names_from = Year,
+#                 values_from = Value) |>
+#     mutate(difference = `2023` - `2018`,
+#            pct_chg = difference/`2018`)
+#   
+#   # label switch
+#   if(pct){
+#     labels_ <- function(x) paste(x*100, "%", sep = "")
+#     ylab_ <- "% change 2018 to 2023"
+#   } else{
+#     labels_ <- function(x) paste(x/1000, "K", sep = "")
+#     ylab_ <- "total change 2018 to 2023"
+#   }
+#   
+#   # create plot
+#   plt <- ggplot(data = df, aes(x = Travel_mode)) +
+#     geom_label(
+#       aes(label = Travel_mode,
+#           y = 0,
+#           size = {{differential}},
+#           ),
+#       
+#     ) + 
+#     scale_y_continuous(labels = labels_) +
+#     theme(axis.text.x = element_blank()) +
+#     facet_grid(rows = vars(Location),
+#     )
+#  return(plt)
+# }
+# 
+# new_changes(two, difference)
+```
+
+
+
 ```{r data_by_key_tee_and_two}
 # extract data by key for main means of travel to education
 tee <- ade_api_data_by_key(key = tee_key, resourceId = "CEN23_TRA_001")
 # rename columns for consistency
 names(tee) <- c("Age", "Location", "Gender", "Travel_mode", "Year", "Value") #AGE EDU GEN TED YEAR VALUE
+tee <- shorter_modes(tee)
 
 # extract corresponding data by key for main means of travel to work
 two <- ade_api_data_by_key(key = two_key, resourceId = "CEN23_TRA_003")
 # rename columns for consistency 
 names(two)<- c("Age", "Gender", "Travel_mode", "Location", "Year", "Value")#AGE GEN TWO WOA YEAR VALUE
+two <- shorter_modes(two)
 ```
 
 # Introduction  
@@ -379,21 +585,19 @@ Although the TED and TWO data share characteristics and features, there are some
 
 ### Structure of the TED and TWO data  
 
-For each dataset, one row comprises a unique record across all five category columns, so the total number of rows is a function of the number of unique levels in each category: 
+For each dataset, one row comprises a unique record across all five category columns, so the total number of rows is a function of the number of unique levels in each category (see Table \@ref(tab:uniqueVals)) 
 
-`r knitr::kable(tee |> select(-Value) |> summarise_all(n_distinct), caption = "TED: Count of levels in each category", label = "tee-count")`
+`r knitr::kables(list(kable(tee |> select(-Value) |> summarise_all(n_distinct), valign = "t"), kable(two |> select(-Value) |> summarise_all(n_distinct), valign = "t")), caption = "Unique levels in each category of TED (left) and TWO (right) data", label = "uniqueVals")`
 
 Thus the total number of rows for the TED data set is the product of the counts of distinct values in each category: `r tee |> select(-Value) |>summarise_all(n_distinct) |> paste(collapse="x")` = `r nrow(tee)`.  Similarly the total number of rows for the TWO data, following the same procedure, is also the product of the counts of distinct values in each category: `r two |> select(-Value) |>summarise_all(n_distinct) |> paste(collapse="x")` = `r nrow(two)`.
 
-`r knitr::kable(two |> select(-Value) |> summarise_all(n_distinct), caption = "TWO: Count of levels in each category", label = "two-count")`
-
 Note that the TWO data has fewer distinct levels for Age and more distinct levels for Travel_mode.  The "Main means of travel to work" category is actually the "Main means of travel to work (15 years of age and over)" and as such, excludes the age categories "0-4 years", "5-9 years" and "10-14 years".  
 
-`r knitr::kable(sort(unique(tee$Travel_mode)), col.names = "Modes of travel to education", caption = "TED: travel modes", label = "teeModes")` 
+`r knitr::kables(list(kable(tee |> select(Travel_mode) |> unique(), row.names = F, col.names = "Modes of travel to education", ,valign = "t"), kable(tee |> select(Value) |> summary(), ,valign = "t")), label = "teeModeVal", caption = "Unique modes of travel to education and summary of Value column")`
 
-Both TED and TWO data include:  "Bicycle", "Ferry", "Other", "Public bus", "Train", and "Walk or jog".  The most obvious mode that is unique to the TED data is "School bus" (see Table \@ref(tab:teeModes) ).  The TED data also includes: "Drive a car, truck or van", "Passenger in a car, truck or van", and "Study at home".  The TWO data (Table \@ref(tab:twoModes) ) includes corresponding modes, modified for the context, splitting driving a vehicle into: "Drive a company car, truck or van" and "Drive a private car, truck or van"; and expanding the passenger category to: "Passenger in a car, truck, van or company bus".  The TWO data also distinguishes the non-travelling mode into: "Did not go to work today" and "Work at home".
+Both TED and TWO data include:  "Bicycle", "Ferry", "Other", "Public bus", "Train", and "Walk or jog".  The most obvious mode that is unique to the TED data is "School bus" .  The TED data also includes: "Drive a car, truck or van", "Passenger in a car, truck or van", and "Study at home".  The TWO data (Table \@ref(tab:twoModeVal) ) includes corresponding modes, modified for the context, splitting driving a vehicle into: "Drive a company car, truck or van" and "Drive a private car, truck or van"; and expanding the passenger category to: "Passenger in a car, truck, van or company bus".  The TWO data also distinguishes the non-travelling mode into: "Did not go to work today" and "Work at home".
 
-`r knitr::kable(sort(unique(two$Travel_mode)), col.names = "Modes of travel to work", caption = "TWO: travel modes", label = "twoModes")`  
+`r knitr::kables(list(kable(two |> select(Travel_mode) |> unique(), row.names = F, col.names = "Modes of travel to work", ,valign = "t"), kable(two |> select(Value) |> summary(), ,valign = "t")), label = "twoModeVal", caption = "Unique modes of travel to work and summary of Value column")` 
 
 ## Basic statistics  
 
@@ -401,23 +605,22 @@ Both TED and TWO data include:  "Bicycle", "Ferry", "Other", "Public bus", "Trai
 
 The TED data has `r nrow(tee)` rows across `r ncol(tee)` columns, with the "Value" column representing the count of observations for a given row.  
 
-`r knitr::kable(tee |> select(Value) |> summary(), col.names = "TED: Value", caption = "Summary of Value column for TED data", label = "teeValSum")`  
-
-Table \@ref(tab:teeValSum) shows that most counts in the "Value" column are reasonably low with the minimum and first quantile at 0, the median at `r median(tee$Value,na.rm = T)`, the third quantile at `r stats::quantile(tee$Value, probs = 0.75, na.rm = T)` and the mean at `r round(mean(tee$Value,na.rm = T),1)`.  The TWO data has a maximum value of `r format(max(tee$Value,na.rm = T), nsmall = 0)` and over 3,000 NA observations.  
-
-```{r histTee, include=TRUE, fig.show='hold',fig.cap="Histograms for 'Main means of travel to education counts'"}
-par(mfrow = c(1, 2))
-
-hist(tee$Value, main = "Histogram - full", xlab = "Value", breaks = 30)
-hist(tee$Value, ylim = c(0, 30), main= "Highlight high counts", xlab = "Value", breaks = 30)
-par(mfrow = c(1, 1))
-```
+Table \@ref(tab:teeModeVal) shows that most counts in the "Value" column are reasonably low with the minimum and first quantile at 0, the median at `r median(tee$Value,na.rm = T)`, the third quantile at `r stats::quantile(tee$Value, probs = 0.75, na.rm = T)` and the mean at `r round(mean(tee$Value,na.rm = T),1)`.  The TED data has a maximum value of `r format(max(tee$Value,na.rm = T), nsmall = 0)` and over 3,000 missing (NA) observations.  
 
 If we plot the "Value" column as a histogram (see Figure \@ref(fig:histTee) ), we see that the vast majority of counts are on the low end and we have to zoom right in to the lowest frequencies to discern counts higher than 5,000, which are vary rare.
 
+```{r histTee, include=TRUE, fig.cap="Histograms for 'Main means of travel to education counts'"}
+par(fig = c(0, 1, 0, 1))
+
+hist(tee$Value, main = "Histogram: TED including low-frequency, high-value counts", xlab = "Value", breaks = 30)
+par(fig = c(0.3, 1, 0.3, 0.9), new = T)
+hist(tee$Value, ylim = c(0, 20), main= "Zoomed-in to high counts", xlab = "", ylab = "", breaks = 30)
+par(mfrow = c(1, 1))
+```
+
 On further examination, Figure \@ref(fig:teeDot) shows the highest values in the TED data (i.e. >10,000) are mostly in the Auckland Region, for the "Passenger in a car, truck or van" and "Walk or jog" modes of travel.  A handful of high values occur in Canterbury Region and Waikato Region, both for mode "Passenger in a car, truck or van"
 
-```{r teeDot, include = TRUE, fig.dim=c(7, 4), fig.cap="Travel to education: values by location" }
+```{r teeDot, include = TRUE, fig.cap="Travel to education: values by location" }
 # create a scatter plot to show the distribution of highest values
 ggplot(data = tee) +
   geom_point(position = position_jitterdodge(),
@@ -437,23 +640,21 @@ ggplot(data = tee) +
 
 The TWO data has `r nrow(two)` rows across `r ncol(two)` columns, with the "Value" column again representing the count of observations for a given row. 
 
-`r knitr::kable(two |> select(Value) |> summary(), col.names = "TWO: Value", caption = "Summary of Value column for TWO data", label = "twoValSum")`
+As with the TED data, Table \@ref(tab:twoModeVal) shows that most counts in the "Value" column are quite low with the minimum and first quantile at 0, the median at `r median(two$Value,na.rm = T)`, the third quantile at `r stats::quantile(two$Value, probs = 0.75, na.rm = T)` and the mean at `r round(mean(two$Value,na.rm = T),1)`.  The TWO data has a maximum value of `r format(max(two$Value,na.rm = T), nsmall = 0)` and over 4,000 missing (NA) observations.  
 
-As with the TED data, Table \@ref(tab:twoValSum) shows that most counts in the "Value" column are quite low with the minimum and first quantile at 0, the median at `r median(two$Value,na.rm = T)`, the third quantile at `r stats::quantile(two$Value, probs = 0.75, na.rm = T)` and the mean at `r round(mean(two$Value,na.rm = T),1)`.  The TWO data has a maximum value of `r format(max(two$Value,na.rm = T), nsmall = 0)` and over 4,000 NA observations.  
+If we plot the "Value" column as a histogram (see Figure \@ref(fig:histTwo) ), we see that the vast majority of counts are on the low end and again we have to zoom in to the lowest frequencies to discern higher counts.
 
-```{r histTwo, include=TRUE, fig.show='hold',fig.cap="Histograms for 'Main means of travel to work counts'"}
-par(mfrow = c(1, 2))
-
-hist(two$Value, main = "Histogram - full", xlab = "Value", breaks = 30)
-hist(two$Value, ylim = c(0, 30), main= "Highlight high counts", xlab = "Value", breaks = 30)
+```{r histTwo, include=TRUE, fig.cap="Histograms for 'Main means of travel to work counts'"}
+par(fig = c(0, 1, 0, 1))
+hist(two$Value, main = "Histogram: TWO including low-frequency, high-value counts", xlab = "Value", breaks = 30)
+par(fig = c(0.3, 1, 0.3, 0.9), new = T)
+hist(two$Value, ylim = c(0, 20), main= "Zoomed-in to high counts", xlab = "", ylab = "", breaks = 30)
 par(mfrow = c(1, 1))
 ```
 
-If we plot the "Value" column as a histogram (see Figure \@ref(fig:histTwo) ), we see that the vast majority of counts are on the low end and again we have to zoom right in to the lowest frequencies to discern higher counts.
-
 Figure \@ref(fig:twoDot) shows the highest values in the TWO data (i.e. >10,000) are again mostly in the Auckland Region, for the "Drive a private car, truck or van" and "Work at home" modes of travel.  A handful of high values occur in Canterbury Region for mode "Drive a private car, truck or van".
 
-```{r twoDot, include = TRUE, fig.dim=c(7, 4), fig.cap="Travel to work: values by location" }
+```{r twoDot, include = TRUE, fig.cap="Travel to work: values by location" }
 # create a scatter plot to show the distribution of highest values
 ggplot(data = two) +
   geom_point(position = position_jitterdodge() ,
@@ -477,27 +678,9 @@ Figures \@ref(fig:teeDot) and \@ref(fig:twoDot) both show extremely high counts 
 
 Using proportions allows comparison between regions by adjusting for population size and provides an insight into preferences that may differ by region.  While proportions analysis allows for comparison between regions, consideration must (eventually) be given to the underlying population size, lest strong preferences of a small population mask weaker preferences of a much larger portion of the population.
 
-Disaggregation to Local Board level increases the number of geographic areas for consideration and therefore the complexity, but it also provides for more granular analysis and potentially balances population size between other regions.   
+Disaggregation to Local Board level increases the number of geographic areas for consideration and therefore the complexity, but it also provides for more granular analysis and potentially balances population size against other regions.   
 
-## Travel to education and travel to work, by Region  
-
-```{r fn_prop_bar}
-# create ggplot
-prop_bar <- function(df, df_lab, x, x_lab, fill, fill_lab){
-  plt <- ggplot(data = df) +
-    geom_bar(position = "fill",
-             stat = "identity",
-             aes(y = Value, 
-                 x = {{x}},
-                 fill = {{fill}})
-             ) +
-    labs(title = paste(fill_lab, df_lab, "by", x_lab)) +
-    ylab("Proportion") +
-    coord_flip()
-  
-  return(plt)
-}
-```
+## Travel to education by Region  
 
 We can view the proportions of responses by region using a visual plot that considers the total number of responses within a region as 100% and the sum of responses for a particular mode of travel divided by the total as the proportion.  Figure \@ref(fig:propTED) shows a preference across all regions for "Passenger in a car, truck or van", "Walk or jog", "Drive a car, truck or van", and then "School bus" and "Study at home".  This shows that regardless of region, "Passenger in a car, truck or van" is the preferred means of travel to education, followed by "Walk or jog".  
 
@@ -511,145 +694,101 @@ prop_bar(df = tee,
          fill_lab = "Mode of travel")
 ```
 
-```{r fn_wrapped_regions}
-# use facet grid to view all modes of travel to education
-wrapped_regions <- function(df) {
-  
-  # summarise Values
-  df <- df |> 
-    group_by(Location, Travel_mode) |> 
-    summarise(Value = sum(Value, na.rm = T),
-              .groups = "keep")
-  
-  # create plot
-  plt <- ggplot(data = df,  
-       aes(fill = Travel_mode,
-           y = Value,
-           x = Travel_mode)
-       ) +
-  geom_col(
-    position = "dodge",
-    stat = "summary",
-    fun = sum
-    ) +
-  facet_wrap(~Location) +
-  scale_y_continuous(labels = function(x) paste(x/1000, "K")) +
-  theme(
-    # legend.position = "none", 
-    axis.text.x = element_blank()
-    )
-  
-  return(plt)
-}
-```
-
-```{r fn_wrapped_years}
-# use facet grid to view all modes of travel to education
-wrapped_years <- function(df) {
-  # summarise Values
-  df <- df |> 
-    group_by(Location, Travel_mode, Year) |> 
-    summarise(Value = sum(Value, na.rm = T),
-                        .groups = "keep")
-  # create plot
-  plt <- ggplot(data = df,  
-       aes(fill = Travel_mode,
-           y = Value,
-           x = Travel_mode)
-       ) +
-  geom_col(
-    position = "dodge",
-    stat = "identity",
-    ) +
-  facet_grid(cols =vars(Location), rows = vars(Year)) +
-  scale_y_continuous(labels = function(x) paste(x/1000, "K")) +
-  theme(
-    # legend.position = "none", 
-    axis.text.x = element_blank(),
-    )
-  
-  return(plt)
-}
-```
-
-
-```{r teeRgnFct, include=T, fig.cap="Travel to education by Region"}
-wrapped_regions(tee)
+```{r teeRgnFct, include=T, fig.dim = c(8, 9), fig.cap="Travel to education across all regions"}
+wrapped_regions(tee, T)
 ```
 
 Figure \@ref(fig:teeRgnFct) shows a breakdown of modes of travel to education by region, highlighting the effect of differing population-size in each region.  The scale for all plots are weighted to the values in Auckland Region, so regions with lower populations and therefore lower values are impossible to interpret.  By grouping regions of similar population sizes together, preferences for modes of travel become perceivable.  
 
+### Travel to education:  Canterbury, Waikato, and Wellington regions 
+
+#### Combined totals for 2018 and 2023  
+
 ```{r teeCWW, include = T, fig.cap="Travel to education, modes for Canterbury, Waikato, Wellington regions"}
 # Canterbury, Waikato, Wellington
-wrapped_regions(tee|> filter(str_detect(Location, "anter|elling|aikat")))
+rgn1 <- "anter|elling|aikat"
+wrapped_regions(tee|> filter(str_detect(Location, rgn1)))
 ```
 
-Figure \@ref(fig:teeCWW) reinforces the clear preference for "Passenger in a car, truck or van" for Canterbury, Waikato, and Wellington regions, with counts close to 110,000 in Canterbury, over 100,000 in Waikato, and counts of close to 90,000 in Wellington.  "Walk or jog" is the next most popular mode of travel to education in these regions, with nearly 60,000 in Canterbury and Wellington, and just over 30,000 in Waikato.  There are differences in the third most preferred mode of travel to education across these regions, with "Drive a car, truck or van" in Canterbury Region (around 40,000) and Waikato (just under 30,000), whereas Wellington Region has around 20,000 preferring this mode.  "Bicycle" is the next most popular mode in Canterbury, at around 20,000, but this mode is less popular than buses and studying at home in Waikato and Wellington.  "School bus" is popular across all three regions, at close to 25,000 in Waikato, around 20,000 in Canterbury, and over 15,000 in Wellington.  "Public bus" is more popular in Wellington (over 20,000) than in the other two regions and is ahead of "School bus" and "Study at home".  Of these three regions, only Wellington has "Train" as a popular mode of transport (over 10,000).  "Study at home" is above 15,000 for all three regions.
+Figure \@ref(fig:teeCWW) reinforces the clear preference for "Passenger in a car, truck or van" for Canterbury, Waikato, and Wellington regions, with counts close to 110,000 in Canterbury, over 100,000 in Waikato, and counts of close to 90,000 in Wellington.  "Walk or jog" is the next most popular mode of travel to education in these regions, with nearly 60,000 in Canterbury and Wellington, and just over 30,000 in Waikato.  There are differences in the third most preferred mode of travel to education across these regions, with "Drive a car, truck or van" in Canterbury Region (around 40,000) and Waikato (just under 30,000), whereas Wellington Region has around 20,000 preferring this mode.  
 
-```{r teeCWWyr, include = T, fig.cap="Travel to education, modes for Canterbury, Waikato, Wellington regions, by year"}
+"Bicycle" is the next most popular mode in Canterbury, at around 20,000, but this mode is less popular than buses and studying at home in Waikato and Wellington.  "School bus" is popular across all three regions, at close to 25,000 in Waikato, around 20,000 in Canterbury, and over 15,000 in Wellington.  "Public bus" is more popular in Wellington (over 20,000) than in the other two regions and is ahead of "School bus" and "Study at home".  Of these three regions, only Wellington has "Train" as a popular mode of transport (over 10,000).  "Study at home" is above 15,000 for all three regions.
+
+#### Change between 2018 and 2023  
+
+Figure \@ref(fig:teeCWWyr) breaks down the total counts for travel to education into individual years for Canterbury, Waikato and Wellington regions.  While this plot provides some visibility of change between the census years 2018 and 2023 for each mode, it is difficult to make comparisons due to the positioning of the plots.  
+
+```{r teeCWWyr, include = T, fig.dim = c(8, 6), fig.cap="Travel to education, modes for Canterbury, Waikato, Wellington regions, by year"}
 # Canterbury, Waikato, Wellington
-wrapped_years(tee|> filter(str_detect(Location, "anter|elling|aikat")))
+wrapped_years(tee|> filter(str_detect(Location, rgn1)))
 ```
 
-```{r fn_changes}
+Figure \@ref(fig:teeChangesAbs) provides a more focussed presentation of the absolute change in counts for each mode between 2018 and 2023.  Similarly, Figure \@ref(fig:teeChangesPct) presents the percentage change, that is the proportion of change based on the 2018 count for a given mode.
 
-changes <- function(df, differential, pct = FALSE) {  
-  # calculate absolute and pct change
-  df <- df |> 
-    group_by(Location, Travel_mode, Year) |> 
-    summarise(Value = sum(Value, na.rm =T),
-              .groups = "keep") |>
-    pivot_wider(id_cols = c(Location, Travel_mode), 
-                names_from = Year,
-                values_from = Value) |>
-    mutate(difference = `2023` - `2018`,
-           pct_chg = difference/`2018`)
-  
-  # label switch
-  if(pct){
-    labels_ <- function(x) paste(x*100, "%", sep = "")
-    ylab_ <- "% change 2018 to 2023"
-  } else{
-    labels_ <- function(x) paste(x/1000, "K", sep = "")
-    ylab_ <- "total change 2018 to 2023"
-  }
-  
-  # create plot
-  plt <- ggplot(data = df, aes(x = Travel_mode)) +
-    geom_point(
-      shape = 21,
-      aes(y = 0),
-      colour = "orange"
-    ) + 
-    geom_point(
-      aes(y = {{differential}},
-          colour = Travel_mode),
-      ) +
-    geom_segment(
-      aes(
-        y = 0,
-        yend = {{differential}},
-        colour = Travel_mode),
-      ) +
-    labs(
-      y = ylab_
-    ) +
-    scale_y_continuous(labels = labels_) +
-    theme(axis.text.x = element_blank())+
-    facet_grid(cols = vars(Location), 
-    )
- return(plt)
-}
+```{r teeChangesAbs, include=T, fig.dim=c(8,3), fig.cap= "Travel to education absolute changes 2018 to 2023"}
+changes(tee|> filter(str_detect(Location, rgn1)), difference, F)
 ```
 
-```{r teeChanges, include=T, fig.cap= "Travel to education absolute and percent changes 2018 to 2023"}
-changes(tee|> filter(str_detect(Location, "anter|elling|aikat")), difference, F)
+Figure \@ref(fig:teeChangesAbs) shows the greatest absolute change in travel modes was for "Passenger in a car, truck or van" in Waikato (increase over 5,000) and Canterbury (increase close to 5,000).  "Study at home" increased across all three regions by close to 5,000 in Canterbury, over 4,000 in Wellington, and over 3,000 in Waikato.  Only Canterbury saw an increase in "Bicycle" (increase over 1,500), and "Walk or jog" (increase of around 1,000).  Waikato and Wellington regions both saw a decline in "Walk or jog", decreasing by nearly 6,000 in Wellington, and over 3,000 in Waikato.  Waikato saw a decrease in the total number of "Drive a car, truck or van", reducing by 1,500, while both Canterbury and Wellington both saw very small increases.  While both Canterbury and Waikato saw a reduction in "Public bus" and "School bus", Wellington saw an increase in "Public bus" (increase around 1,500), with no discernable change for "School bus".
+
+Figure \@ref(fig:teeChangesPct) shows percentage change between 2018 and 2023, highlighting an increase in "Study at home" of over 60% for each region.  Although all regions saw a drop in "Train", only Wellington had significant numbers of train users and even those numbers were fairly low at around 5,000 for each of the two census years.
+
+```{r teeChangesPct, include=T, fig.dim=c(8,3), fig.cap= "Travel to education % changes 2018 to 2023"}
+changes(tee|> filter(str_detect(Location, rgn1)), pct_chg, T)
+```
+
+### Travel to eduction:  Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions  
+
+```{r teeBMOHN, include = T, fig.dim = c(8, 6), fig.cap="Travel to education, modes for Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions"}
+# Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions
+rgn2 <- "enty|anawa|tago|awke|orthl"
+wrapped_regions(tee|> filter(str_detect(Location, rgn2)))
+```
+
+Figure \@ref(fig:teeBMOHN) shows "Passenger" as the most preferred means of travel for Bay of Plenty (around 60,000), Hawke's Bay (35,000), Manawatū- Whanganui (over 40,000), and Northland (just over 35,000), but slightly less preferred (at just under 40,000) to "Walk or jog" (just over 40,000) in Otago.  Preferences differ slightly across regions with "School bus" (just over 20,000), "Walk or jog (around 20,000), "Private vehicle" (around 15,000) and study "At home" (just over 10,000). "School bus is second-most preferred mode for Northland (nearly 20,000), and third for Manawatū-Whanganui around 14,000).  "Walk or jog is second most preferred mode for Hawke's Bay (just under 15,000) and Manawatū-Whanganui (just under 20,000).  
+
+```{r teeBMOHNyr, include = T, fig.dim = c(8, 8), fig.cap="Travel to education, modes for Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions, by year"}
+# BMOHN
+wrapped_years(tee|> filter(str_detect(Location, rgn2)))
+```
+
+Figure \@ref(fig:teeBMOHNyr) shows reasonably consistent preferences between 2018 and 2023 for all regions, with a noticeable increase in study "At home" across all regions and a decrease in "Walk or jog" for all regions except Otago.  There is greater detail in Figure \@ref(fig:teeAbsBMOHN) showing absolute increases of over 1,000 for study "At home", including increase of 2,500 in Bay of Plenty, over 1,500 in Manawatū-Whanganui and Otago, just under 1,500 in Northland and around 1,500 in Hawke's Bay.  All regions show an increase in "Passenger" with greatest increases in Manawatū-Whanganui, Hawke's Bay (both just under 2,500), Northland (around 2,000), with increases of less than 500 in Bay of Plenty and Otago.  All regions had decreased counts for "Walk or jog" with decrease of more than 2,000 in Manawatū-Whanganui, around 1,500 in Bay of Plenty and Hawke's Bay, and a decrease of just under 1,000 in Northland.  Only Bay of Plenty saw an increase in use of "School bus" (up nearly 1,500) with all other regions decreasing by 1,000 or less.
+
+```{r teeAbsBMOHN, include=T, fig.dim=c(8,3), fig.cap= "Travel to education absolute changes 2018 to 2023"}
+changes(tee|> filter(str_detect(Location, rgn2)), difference, F)
 ```
 
 
+```{r teePctBMOHN, include=T,fig.dim=c(8,3), fig.cap= "Travel to education percent changes 2018 to 2023"}
+changes(tee|> filter(str_detect(Location, rgn2)), pct_chg, T)
+```
+
+### Travel to education:  Gisborne, Marloborough, Nelson, Tasman, West Coast, Southland  
 
 
-Figure \@ref(fig:propTWO) shows proportions for modes of travel to work, with a clear preference for "Drive a private car, truck or van", followed by "Work at home" and then "Drive a company car, truck or van.  These preferences are consistent across all regions.  
+```{r teeGMNTWS, include = T, fig.dim = c(8, 6), fig.cap="Travel to education, modes for Gisborne, Marlborough, Nelson, Tasman, West Coast, and Southland regions"}
+# Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions
+rgn3 <- "isb|arlb|els|asma|oast|outhl"
+wrapped_regions(tee|> filter(str_detect(Location, rgn3)))
+```
+
+```{r teeGMNTWSyr, include = T, fig.dim = c(8, 8), fig.cap="Travel to education, modes for Gisborne, Marlborough, Nelson, Tasman, West Coast, and Southland regions, by year"}
+# BMOHN
+wrapped_years(tee|> filter(str_detect(Location, rgn3)))
+```
+
+```{r teeAbsGMNTWS, include=T, fig.dim=c(8,3), fig.cap= "Travel to education absolute changes 2018 to 2023"}
+changes(tee|> filter(str_detect(Location, rgn3)), difference, F)
+```
+
+```{r teePctGMNTWS, include=T, fig.dim=c(8,3), fig.cap= "Travel to education percent changes 2018 to 2023"}
+changes(tee|> filter(str_detect(Location, rgn3)), pct_chg, T)
+```
+
+
+## Travel to work by Region  
+
+Figure \@ref(fig:propTWO) shows the proportion if different modes of travel to education, by region.  
 
 ```{r propTWO, include = T, fig.cap= "Travel to work:  proportional modes of travel, by Region"}
 # proportion bar chart for travel to work by region
@@ -661,4 +800,68 @@ prop_bar(df = two,
          fill_lab = "Mode of travel")
 ```
 
+Figure \@ref(fig:propTWO) shows proportions for modes of travel to work, with a clear preference for "Drive a private car, truck or van", followed by "Work at home" and then "Drive a company car, truck or van.  These preferences are consistent across all regions.
 
+
+```{r twoRgnFct, include=T, fig.dim = c(8, 9),  fig.cap="Travel to work across all regions"}
+wrapped_regions(two, T)
+```
+
+### Travel to work:  Canterbury, Waikato, Wellington  
+
+
+```{r twoCWW, include = T, fig.cap="Travel to work, modes for Canterbury, Waikato, Wellington regions"}
+wrapped_regions(two|> filter(str_detect(Location, rgn1)))
+```
+
+```{r twoCWWyr, include = T, fig.cap="Travel to work, modes for Canterbury, Waikato, Wellington regions, by year"}
+wrapped_years(two|> filter(str_detect(Location, rgn1)))
+```
+
+```{r twoAbsCWW, include=T, fig.dim = c(8,3), fig.cap= "Travel to work absolute changes 2018 to 2023"}
+changes(two|> filter(str_detect(Location, rgn1)), difference, F)
+```
+
+```{r twoPctCWW, include=T, fig.dim = c(8,3), fig.cap= "Travel to work percent changes 2018 to 2023"}
+changes(two|> filter(str_detect(Location, rgn1)), pct_chg, T)
+```
+
+### Travel to work:  Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland  
+
+
+
+```{r twoBMOHN, include = T, fig.dim = c(8, 6), fig.cap="Travel to work, modes for Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions"}
+wrapped_regions(two|> filter(str_detect(Location, rgn2)))
+```
+
+```{r twoBMOHNyr, include = T, fig.dim = c(8, 8), fig.cap="Travel to work, modes for Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions, by year"}
+wrapped_years(two|> filter(str_detect(Location, rgn2)))
+```
+
+```{r twoAbsBMOHN, include=T, fig.dim = c(8,3), fig.cap= "Travel to work absolute changes 2018 to 2023"}
+changes(two|> filter(str_detect(Location, rgn2)), difference, F)
+```
+
+```{r twoPctBMOHN, include=T, fig.dim = c(8,3), fig.cap= "Travel to work percent changes 2018 to 2023"}
+changes(two|> filter(str_detect(Location, rgn2)), pct_chg, T)
+```
+
+
+### Travel to work:  Gisborne, Marloborough, Nelson, Tasman, West Coast, Southland  
+
+
+```{r twoGMNTWS, include = T, fig.dim = c(8,6), fig.cap="Travel to work, modes for Gisborne, Marloborough, Nelson, Tasman, West Coast, Southland regions"}
+wrapped_regions(two|> filter(str_detect(Location, rgn3)))
+```
+
+```{r twoGMNTWSyr, include = T, fig.dim=c(8, 8), fig.cap="Travel to work, modes for Gisborne, Marloborough, Nelson, Tasman, West Coast, Southland regions, by year"}
+wrapped_years(two|> filter(str_detect(Location, rgn3)))
+```
+
+```{r twoAbsGMNTWS, include=T, fig.dim = c(8,3), fig.cap= "Travel to work absolute changes 2018 to 2023"}
+changes(two|> filter(str_detect(Location, rgn3)), difference, F)
+```
+
+```{r twoPctGMNTWS, include=T, fig.dim = c(8,3), fig.cap= "Travel to work percent changes 2018 to 2023"}
+changes(two|> filter(str_detect(Location, rgn3)), pct_chg, T)
+```
