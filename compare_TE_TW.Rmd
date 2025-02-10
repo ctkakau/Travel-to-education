@@ -5,10 +5,13 @@ author: 'Chad Kakau: 300212228'
 date: "`r Sys.Date()`"
 output:
   
-  bookdown::pdf_document2:
   bookdown::html_document2:
     fig_caption: yes
+    toc: false
+  bookdown::pdf_document2:
 ---
+
+\newpage
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE,
@@ -44,7 +47,6 @@ base_path <- request("https://apis.stats.govt.nz/ade-api/rest") %>%
     `accept-encoding` = 'identity'
   )
 ```
-
 
 ```{r fn_extract_dimensions}
 # function to extract dimensions 
@@ -467,50 +469,6 @@ changes <- function(df, differential, pct = FALSE) {
 }
 ```
 
-```{r fn_new_changes}
-# 
-# new_changes <- function(df, differential, pct = FALSE) {  
-#   # calculate absolute and pct change
-#   df <- df |> 
-#     group_by(Location, Travel_mode, Year) |> 
-#     summarise(Value = sum(Value, na.rm =T),
-#               .groups = "keep") |>
-#     pivot_wider(id_cols = c(Location, Travel_mode), 
-#                 names_from = Year,
-#                 values_from = Value) |>
-#     mutate(difference = `2023` - `2018`,
-#            pct_chg = difference/`2018`)
-#   
-#   # label switch
-#   if(pct){
-#     labels_ <- function(x) paste(x*100, "%", sep = "")
-#     ylab_ <- "% change 2018 to 2023"
-#   } else{
-#     labels_ <- function(x) paste(x/1000, "K", sep = "")
-#     ylab_ <- "total change 2018 to 2023"
-#   }
-#   
-#   # create plot
-#   plt <- ggplot(data = df, aes(x = Travel_mode)) +
-#     geom_label(
-#       aes(label = Travel_mode,
-#           y = 0,
-#           size = {{differential}},
-#           ),
-#       
-#     ) + 
-#     scale_y_continuous(labels = labels_) +
-#     theme(axis.text.x = element_blank()) +
-#     facet_grid(rows = vars(Location),
-#     )
-#  return(plt)
-# }
-# 
-# new_changes(two, difference)
-```
-
-
-
 ```{r data_by_key_tee_and_two}
 # extract data by key for main means of travel to education
 tee <- ade_api_data_by_key(key = tee_key, resourceId = "CEN23_TRA_001")
@@ -758,6 +716,7 @@ Figure \@ref(fig:teeBMOHNyr) shows reasonably consistent preferences between 201
 changes(tee|> filter(str_detect(Location, rgn2)), difference, F)
 ```
 
+Figure \@ref(fig:teePctBMOHN) shows several very high percentage changes for "Ferry", with ranging between a decrease of 50% to an increase of 200%, but considering the very low counts of in both census years, these high percentages are have very low impact.  All regions had increase of around 50% for study "At home".  "Public bus" usage increased by 75% in Northland and close to 50% in Otago.
 
 ```{r teePctBMOHN, include=T,fig.dim=c(8,3), fig.cap= "Travel to education percent changes 2018 to 2023"}
 changes(tee|> filter(str_detect(Location, rgn2)), pct_chg, T)
@@ -765,6 +724,7 @@ changes(tee|> filter(str_detect(Location, rgn2)), pct_chg, T)
 
 ### Travel to education:  Gisborne, Marloborough, Nelson, Tasman, West Coast, Southland  
 
+Gisborne, Marlborough, Nelson, Tasman, West Coast and Southland all had most preferred mode of travel to education as "Passenger", at nearly 20,000 in Southland, nearly 12,000 in Gisborne, just over 7,500 in each of Marlborough, Nelson, and Tasman, with an increase of just under 5,000 in West Coast.  Southland, Gisborne, and Tasman have the same profile for next most preferred modes of travel with "School bus" (just over 7,500, around 3,000, and around 4,000 respectively) and "Walk or jog" (around 6,000 in Southland, and around 3,000 for both Gisborne and Tasman) at second and third.
 
 ```{r teeGMNTWS, include = T, fig.dim = c(8, 6), fig.cap="Travel to education, modes for Gisborne, Marlborough, Nelson, Tasman, West Coast, and Southland regions"}
 # Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions
@@ -772,23 +732,36 @@ rgn3 <- "isb|arlb|els|asma|oast|outhl"
 wrapped_regions(tee|> filter(str_detect(Location, rgn3)))
 ```
 
+"Walk or jog" was second most preferred at Nelson (over 5,000), followed by "Private vehice" (around 3,000), and then "School bus" (around 2,000).  Marlborough has around 2,500 opting for "Walk or jog" with slightly less than 2,500 using "School bus".  West Coast has 
+just under 2,500 "School bus" and just over 2,000 for "Walk or jog"
+
 ```{r teeGMNTWSyr, include = T, fig.dim = c(8, 8), fig.cap="Travel to education, modes for Gisborne, Marlborough, Nelson, Tasman, West Coast, and Southland regions, by year"}
 # BMOHN
 wrapped_years(tee|> filter(str_detect(Location, rgn3)))
 ```
 
+Figure \@ref(fig:teeGMNTWSyr) shows similar preferences between census years in each region, with only Gisborne Marlborough and Nelson showing a change in the order of preference for modes of travel.  Gisborne had "Walk or jog" going from second to third, exchanging place with "School bus", Marlborough had study "At home" shift from fifth to third, moving ahead of "School bus" and "Bicycle".  Nelson saw study "At home" go from sixth to fifth, ahead of "School bus".
+
 ```{r teeAbsGMNTWS, include=T, fig.dim=c(8,3), fig.cap= "Travel to education absolute changes 2018 to 2023"}
 changes(tee|> filter(str_detect(Location, rgn3)), difference, F)
 ```
+
+Figure \@ref(fig:teeAbsGMNTWS) shows that the largest changes between 2018 and 2023 were increase in "Passenger", over 700 in Gisborne, and nearly 600 in Southland.  Southland and Gisborne also saw relatively large decrease in "Walk or jog", dropping by nearly 800 in Southland and nearly 600 in Gisborne.
+
 
 ```{r teePctGMNTWS, include=T, fig.dim=c(8,3), fig.cap= "Travel to education percent changes 2018 to 2023"}
 changes(tee|> filter(str_detect(Location, rgn3)), pct_chg, T)
 ```
 
+The highest percentage changes occur in Nelson, Tasman, with 100% decrease in "Ferry", along with a 50% increase in "Ferry" for Gisborne and Southland. All regions saw an increase of between 25-50% for study "At home".  Nelson and Tasman also saw increase in "Public bus" (over 25% in Nelson and nearly 50% in Tasman).  All other regions saw a decrease in "Public bus", dropping by more than 50% for West Coast, and around 25% in Gisborne and Marlborough.
+
+### Summary of travel to education by region  
+
+The preferred mode of travel to education across all regions and both census years is "Passenger", followed by "Walk or jog", "School bus", "Private vehicle", and study "At home".  All regions saw high increases for study "At home" (i.e. either first or second highest increase in preferred mode) and most regions saw increases for "Passenger".  Although some regions saw very high percentage changes, the majority were for modes of travel that had very low counts to begin with so have little influence on preferences within a region.  
 
 ## Travel to work by Region  
 
-Figure \@ref(fig:propTWO) shows the proportion if different modes of travel to education, by region.  
+Figure \@ref(fig:propTWO) shows the proportion of different modes of travel to work, by region.  
 
 ```{r propTWO, include = T, fig.cap= "Travel to work:  proportional modes of travel, by Region"}
 # proportion bar chart for travel to work by region
@@ -800,27 +773,35 @@ prop_bar(df = two,
          fill_lab = "Mode of travel")
 ```
 
-Figure \@ref(fig:propTWO) shows proportions for modes of travel to work, with a clear preference for "Drive a private car, truck or van", followed by "Work at home" and then "Drive a company car, truck or van.  These preferences are consistent across all regions.
-
+Figure \@ref(fig:propTWO) shows proportions for modes of travel to work, with a clear preference for "Private vehicle", followed by work "At home" and then "Company vehicle".  These preferences are consistent across all regions.  "Public bus" have fourth highest proportions in Wellington, Auckland, Otago and Canterbury.  "Train" is fifth highest proportion for Wellington.  "Bicycle" is fourth highest proportion in Canterbury, fifth highest proportion in Nelson, Marlborough, and Tasman.
 
 ```{r twoRgnFct, include=T, fig.dim = c(8, 9),  fig.cap="Travel to work across all regions"}
 wrapped_regions(two, T)
 ```
 
+Regional totals are shown in Figure \@ref(fig:twoRgnFct).  Auckland has a much higher population than all other regions, so grouping into similar population-sized groups is still appropriate.  
+
 ### Travel to work:  Canterbury, Waikato, Wellington  
 
+Figure \@ref(fig:twoCWW) shows "Private vehicle" is the most preferred with nearly 400,000 in Canterbury, nearly 275,000 in Waikato, and just under 250,00 in Wellington.  Work "At home" is the next most popular mode of travel to work, at nearly 100,000 in Canterbury, and around 80,000 in each of Waikato and Wellington.  "Company vehicle" is third most popular for Canterbury (around 80,000) and Waikato (just over 50,000), but is fifth most popular in Wellington (at just under 50,000), behind "Walk or jog" (just over 50,000) and "Public bus" (around 50,000).
 
 ```{r twoCWW, include = T, fig.cap="Travel to work, modes for Canterbury, Waikato, Wellington regions"}
 wrapped_regions(two|> filter(str_detect(Location, rgn1)))
 ```
 
+Figure \@ref(fig:twoCWWyr) shows that preferences in all three regions remain mostly consistent between 2018 and 2023, with only study "At home" changing in order of preference.  All three regions have an increase for work "At home", which also overtakes "Company vehicle" in Canterbury. 
+
 ```{r twoCWWyr, include = T, fig.cap="Travel to work, modes for Canterbury, Waikato, Wellington regions, by year"}
 wrapped_years(two|> filter(str_detect(Location, rgn1)))
 ```
 
+For all regions, work "At home" increased the most between 2018 and 2023, by over 30,000 in Wellington, 15,000 in Canterbury and around 12,000 in Waikato.  Figure \@ref(fig:twoAbsCWW) "Private vehicle" increased by around 8,000 in Canterbury and just under 5,000 in Waikato, but decreased by nearly 4,000 in Wellington, which also saw a reduction in "Walk or jog" (around 4,000) and "Train" (around 3,000).
+
 ```{r twoAbsCWW, include=T, fig.dim = c(8,3), fig.cap= "Travel to work absolute changes 2018 to 2023"}
 changes(two|> filter(str_detect(Location, rgn1)), difference, F)
 ```
+
+Percentage change in Figure \@ref(fig:twoPctCWW) are dominated by an increase of 125% for work "At home" in Wellington.  Both Canterbury and Waikato see an increase of around 40% in work "At home".  "Train" and "Walk jog" reduce by around 10% in Wellington.  Although there are reasonably high percentage changes for other modes of travel in Canterbury and Waikato, those modes have very low total counts (e.g. "Other" and "Train").  
 
 ```{r twoPctCWW, include=T, fig.dim = c(8,3), fig.cap= "Travel to work percent changes 2018 to 2023"}
 changes(two|> filter(str_detect(Location, rgn1)), pct_chg, T)
@@ -828,40 +809,121 @@ changes(two|> filter(str_detect(Location, rgn1)), pct_chg, T)
 
 ### Travel to work:  Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland  
 
-
+Combined totals across 2018 and 2023 for travel to work in Bay of Plenty, Hawke's Bay, Manawatū-Whanganui, Northland and Otago are shown in Figure \@ref(fig:twoBMOHN).  "Private vehicle" is the most preferred mode of travel across all five regions, with around 180,000 in Bay of Plenty, 140,000 in Manawatū-Whanganui, 130,000 in Otago, just over 100,000 in Hawke's Bay and just under 100,000 in Northland.  Preferences are consistent across all regions with work "At home" second, "Company vehicle" third and either "Walk or jog" or "Passenger" coming in at fourth.  Total counts for work "At home" are around 50,000 in Bay of Plenty, around 40,000 in Otago and Manawatū-Whanganui, around 30,000 in Northland and around 25,000 in Hawke's Bay.  "Company vehicle" has around 40,000 in Bay of Plenty, 30,000 in Otago, just over 25,000 in Manawatū-Whanganui and just under 25,000 in Hawke's Bay and Northland.
 
 ```{r twoBMOHN, include = T, fig.dim = c(8, 6), fig.cap="Travel to work, modes for Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions"}
 wrapped_regions(two|> filter(str_detect(Location, rgn2)))
 ```
 
+Counts for census years 2018 and 2023 (Figure \@ref(fig:twoBMOHNyr)) shows that preferences remain generally consistent within each region across both years, with preferred modes being "Private vehicle", work "At home", "Company vehicle", and "Walk or jog".  Of these first four preferred modes, only "Walk or jog" saw a decrease between 2018 and 2023.  
+
 ```{r twoBMOHNyr, include = T, fig.dim = c(8, 8), fig.cap="Travel to work, modes for Bay of Plenty, Manawatū-Whanganui, Otago, Hawke's Bay, and Northland regions, by year"}
 wrapped_years(two|> filter(str_detect(Location, rgn2)))
 ```
+
+Figure \@ref(fig:twoAbsBMOHN) quantifies the change between 2018 and 2023 showing the biggest absolute increase was for work "At home", increasing by more than 7,000 in Bay of Plenty, by over 4,000 in Otago, Northland and Manawatū-Whanganui, and by more than 2,500 in Hawke's Bay.  "Private vehicle" increased by over 4,000 in Bay of Plenty, by more than 3,000 in Manawatū-Whanganui, by just under 3,000 in Otago and by around 2,000 in Northland and Hawke's Bay.  "Company vehicle" saw smaller increases (between 1,000 and 2,000) for all five regions.  Counts of "Walk or jog" decreased in all regions, by around 1,000 in Otago and Manawatū-Whanganui and Bay of Plenty, and by less than 500 in Northland and Hawke's Bay.
 
 ```{r twoAbsBMOHN, include=T, fig.dim = c(8,3), fig.cap= "Travel to work absolute changes 2018 to 2023"}
 changes(two|> filter(str_detect(Location, rgn2)), difference, F)
 ```
 
+Percentage changes in Figure \@ref(fig:twoPctBMOHN) are dominated by high percentages for low volume changes, such as more than doubling for "Ferry" in Manawatū-Whanganui, and decreasex of 50% for "Ferry" in Otago, more than 50% for "Train" in Bay of Plenty.  Work "At home" increased by over 25% in Bay of Plenty, Northland, Manawatū-Whanganui, and Otago, and by just under 25% in Hawke's Bay. 
+
 ```{r twoPctBMOHN, include=T, fig.dim = c(8,3), fig.cap= "Travel to work percent changes 2018 to 2023"}
 changes(two|> filter(str_detect(Location, rgn2)), pct_chg, T)
 ```
 
-
 ### Travel to work:  Gisborne, Marloborough, Nelson, Tasman, West Coast, Southland  
 
+Figure \@ref(fig:twoGMNTWS) shows the total counts for Travel to work in Gisborne, Marlborough, Nelson, Tasman, West Coast, and Southland.  Combined preferences for 2018 and 2023 census years show that "Private vehicle" is most preferred for all six regions, with 60,000 in Southland, over 30,000 in Nelson and just under 30,000 in Marlborough and Tasman.  West Coast has around 19,000 for "Private vehicle".  Across all six regions, work "At home" is second" and "Company vehicle" is third and "Walk or jog" is fourth most preferred mode of travel.
 
 ```{r twoGMNTWS, include = T, fig.dim = c(8,6), fig.cap="Travel to work, modes for Gisborne, Marloborough, Nelson, Tasman, West Coast, Southland regions"}
 wrapped_regions(two|> filter(str_detect(Location, rgn3)))
 ```
 
+Counts for 2018 and 2023 are shown in Figure \@ref(fig:twoGMNTWSyr) and preferences are consistent between the two census years for most regions.  
+
 ```{r twoGMNTWSyr, include = T, fig.dim=c(8, 8), fig.cap="Travel to work, modes for Gisborne, Marloborough, Nelson, Tasman, West Coast, Southland regions, by year"}
 wrapped_years(two|> filter(str_detect(Location, rgn3)))
 ```
+
+Absolute changes for these six regions are shown in Figure \@ref(fig:twoAbsGMNTWS).  The highest change was in Tasman with an increase of over 1,500 for work "At home", followed by increases of around 1,500 for "Private vehicle" in each of Southland and Gisborne.  Work "At home" increased by around 900 in Nelson, which was the largest mode change for the region, and just over 500 in Gisborne.  "Private vehicle" increased by just over 500 in Marlborough, and around 400 in Tasman and West Coast.  All six regions saw a decrease in "Walk or jog".  Nelson saw an increase of over 500 for "Bicycle" between years 2018 and 2023.
 
 ```{r twoAbsGMNTWS, include=T, fig.dim = c(8,3), fig.cap= "Travel to work absolute changes 2018 to 2023"}
 changes(two|> filter(str_detect(Location, rgn3)), difference, F)
 ```
 
+Percentage changes between 2018 and 2023 are dominated by high percentage changes in rarely used modes, such "Ferry" (200% increase in Nelson, 100% decreases in Gisborne and West Coast etc.) and "Train" (200% increase in Marlborough, 100% decrease in West Coast, and over 50% decreases in Nelson and Tasman).
+
 ```{r twoPctGMNTWS, include=T, fig.dim = c(8,3), fig.cap= "Travel to work percent changes 2018 to 2023"}
 changes(two|> filter(str_detect(Location, rgn3)), pct_chg, T)
 ```
+
+### Summary of travel to work by region  
+
+The most preferred means of travel to work across all regions was "Private vehicle", work "At home", and "Company vehicle".  Regional results are dominated by the large population in the Auckland region, so analysis conducted across similar population-sized regions reinforced the preferred modes, albeit at lower volumes.  Work "At home" increased between 2018 and 2023 for almost all regions (with the exception of West Coast), and along with "Private vehicle", was in the top two highest increasing modes in almost all regions, where only Wellington saw a decrease in the use of "Private vehicle". All regions saw a decrease in "Walk or jog"
+
+
+## Travel to education by Age  
+
+The Travel to education data includes aggregation by age into five-year groupings, 0-4 years, 5-9 years, ... all the way to 90+ years
+
+```{r fn_ranked_by_age}
+ranked_by_age <- function(df, df_lab){
+  # call ggbump library
+  library(ggbump)
+  
+  # transform data to rank by Value within age and travel_mode
+  df <- df |>
+    group_by(Age, Travel_mode) |>
+    summarise(Value = sum(Value, na.rm=T), .groups = "keep" ) |>
+    arrange(Age, desc(Value)) |>
+    group_by(Age) |>
+    mutate(
+      Age = Age |> str_split_i("-| years and", i=1) |> as.numeric(),
+      Rank = order(Value, decreasing = T)
+    ) 
+  
+  # generate ggplot object
+  bump <- ggplot(data = df) + 
+    geom_bump(
+      aes(x = Age, y = Rank, colour = Travel_mode)) +
+    geom_point(aes(x = Age, y = Rank, colour = Travel_mode, size = Value))+
+    labs(title = paste("Travel to",df_lab,"values by Age"),
+         y = "Rank", x = "Age")
+return(bump)
+}
+```
+
+```{r fn_tile}
+
+df <- tee |>
+  group_by(Age, Travel_mode) |>
+  summarise(Value = sum(Value, na.rm = T), .groups = "keep")
+
+ggplot(df) +
+  geom_tile(
+    aes(
+      x = Age,
+      y = Travel_mode,
+      fill= Value,
+      ),
+    colour = "grey50"
+  )
+```
+
+
+
+```{r teeAgeRank, include = T, fig.cap = "Ranked travel to education, by Age"}
+ggplotly(ranked_by_age(tee, "education"))
+```
+
+
+## Travel to work by Age  
+
+Since the Travel to work category is restricted by age (i.e. 15 years and over) there is no data for age groups 0-4 years, 5-19 years, and 10-14 years.
+
+```{r twoAgeRank, include = T, fig.cap = "Ranked travel to work, by Age"}
+ggplotly(ranked_by_age(two, "work"))
+```
+
