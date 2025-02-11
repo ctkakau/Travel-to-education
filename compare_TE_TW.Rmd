@@ -469,18 +469,78 @@ changes <- function(df, differential, pct = FALSE) {
 }
 ```
 
+```{r fn_ranked_travel_modes}
+ranked_travel_modes <- function(df, column, labels = c("education", "age")){
+  library(ggbump)
+
+  # transform data to rank by Value within age and travel_mode
+  df <- df |>
+    group_by({{column}}, Travel_mode) |>
+    summarise(Value = sum(Value, na.rm=T), .groups = "keep" ) |>
+    arrange({{column}}, desc(Value)) 
+  
+  # switch based on labels[2]
+  if (labels[2] == "age") {
+  df <- df |>
+    group_by(Age) |>
+    mutate(
+      Age = Age |> str_split_i("-| years and", i=1) |> as.numeric(),
+      Rank = order(Value, decreasing = T))
+    
+  break_labs <- seq(0, 90, 5)
+  n_breaks <- length(break_labs)
+  
+  
+  bump <- ggplot(data = df,
+                 aes(x = Age, y = Rank, colour = Travel_mode))+
+    scale_x_continuous(breaks = break_labs)
+  } else {
+    df <- df |>
+      ungroup() |>
+    mutate(
+      Loc = {{column}} |> factor() |> as.numeric()
+    ) |> 
+    group_by({{column}}) |>
+    mutate(Rank = order(Value, decreasing = T))
+    
+    n_breaks <- length(unique(df$Location))
+    break_labs <- unique(df$Location)  
+    
+    bump <- ggplot(data = df,
+                   aes(x = Loc, y = Rank, colour = Travel_mode)) +
+      theme(axis.text.x = element_text(angle = 30, vjust=0.8, hjust=0.8)) +
+    scale_x_continuous(breaks = 1:n_breaks, labels = break_labs)
+  }
+  
+  # generate ggplot object
+  bump <- bump + 
+    geom_bump() +
+    geom_point(aes(size = Value))+
+    # include variables: df_lab, var_lab (i.e. "age" or "region")
+    labs(title = paste("Preferred modes of travel to",labels[1],"by", labels[2]),
+         y = "Rank")  +
+    scale_y_continuous(breaks = 1:10, labels = 1:10) 
+    
+return(bump)
+}
+```
+
 ```{r data_by_key_tee_and_two}
 # extract data by key for main means of travel to education
-tee <- ade_api_data_by_key(key = tee_key, resourceId = "CEN23_TRA_001")
-# rename columns for consistency
-names(tee) <- c("Age", "Location", "Gender", "Travel_mode", "Year", "Value") #AGE EDU GEN TED YEAR VALUE
-tee <- shorter_modes(tee)
+if (!exists("tee")) {
+  tee <- ade_api_data_by_key(key = tee_key, resourceId = "CEN23_TRA_001")
+  # rename columns for consistency
+  names(tee) <- c("Age", "Location", "Gender", "Travel_mode", "Year", "Value") #AGE EDU GEN TED YEAR VALUE
+  tee <- shorter_modes(tee)
+}
 
 # extract corresponding data by key for main means of travel to work
-two <- ade_api_data_by_key(key = two_key, resourceId = "CEN23_TRA_003")
-# rename columns for consistency 
-names(two)<- c("Age", "Gender", "Travel_mode", "Location", "Year", "Value")#AGE GEN TWO WOA YEAR VALUE
-two <- shorter_modes(two)
+if (!exists("two")) {
+  two <- ade_api_data_by_key(key = two_key, resourceId = "CEN23_TRA_003")
+  # rename columns for consistency 
+  names(two)<- c("Age", "Gender", "Travel_mode", "Location", "Year", "Value")#AGE GEN TWO WOA YEAR VALUE
+  two <- shorter_modes(two)
+}
 ```
 
 # Introduction  
@@ -864,58 +924,41 @@ changes(two|> filter(str_detect(Location, rgn3)), pct_chg, T)
 The most preferred means of travel to work across all regions was "Private vehicle", work "At home", and "Company vehicle".  Regional results are dominated by the large population in the Auckland region, so analysis conducted across similar population-sized regions reinforced the preferred modes, albeit at lower volumes.  Work "At home" increased between 2018 and 2023 for almost all regions (with the exception of West Coast), and along with "Private vehicle", was in the top two highest increasing modes in almost all regions, where only Wellington saw a decrease in the use of "Private vehicle". All regions saw a decrease in "Walk or jog"
 
 
+## Preferred modes of travel by Age  
+
+The Travel to education data includes aggregation by age into five-year groupings, 0-4 years, 5-9 years, ... all the way to 90+ years.  Data in this section is presented using a dot-plot that indicates the value (at each intersection), combined with a bump plot that connects each mode of travel across the different age groups.  These plots can be used to explain differences in preferred mode of travel across age groups.
+
+```{r heatmapAgeVal}
+
+# df <- tee |>
+#   group_by(Age, Travel_mode) |>
+#   summarise(Value = sum(Value, na.rm = T), .groups = "keep") |>
+#   mutate(
+#       Age = Age |> str_split_i("-| years and", i=1) |> as.numeric(),
+#      )
+# 
+# df_lab <- "education"
+# 
+# ggplot(df) +
+#   geom_tile(
+#     aes(
+#       x = Age,
+#       y = Travel_mode,
+#       fill= Value,
+#       ),
+#     colour = "grey50"
+#   ) +
+#   labs(title = paste("Travel to", df_lab, "by Age and Value"),
+#        x = "Age", y = "Travel mode") + 
+#   theme(legend.text = element_text("thousands"))
+```
+
 ## Travel to education by Age  
 
-The Travel to education data includes aggregation by age into five-year groupings, 0-4 years, 5-9 years, ... all the way to 90+ years
+Figure \@ref(fig:teeAgeRank) shows several changes in preference between ages 10 to 15, ages 15 to 20
 
-```{r fn_ranked_by_age}
-ranked_by_age <- function(df, df_lab){
-  # call ggbump library
-  library(ggbump)
-  
-  # transform data to rank by Value within age and travel_mode
-  df <- df |>
-    group_by(Age, Travel_mode) |>
-    summarise(Value = sum(Value, na.rm=T), .groups = "keep" ) |>
-    arrange(Age, desc(Value)) |>
-    group_by(Age) |>
-    mutate(
-      Age = Age |> str_split_i("-| years and", i=1) |> as.numeric(),
-      Rank = order(Value, decreasing = T)
-    ) 
-  
-  # generate ggplot object
-  bump <- ggplot(data = df) + 
-    geom_bump(
-      aes(x = Age, y = Rank, colour = Travel_mode)) +
-    geom_point(aes(x = Age, y = Rank, colour = Travel_mode, size = Value))+
-    labs(title = paste("Travel to",df_lab,"values by Age"),
-         y = "Rank", x = "Age")
-return(bump)
-}
-```
-
-```{r fn_tile}
-
-df <- tee |>
-  group_by(Age, Travel_mode) |>
-  summarise(Value = sum(Value, na.rm = T), .groups = "keep")
-
-ggplot(df) +
-  geom_tile(
-    aes(
-      x = Age,
-      y = Travel_mode,
-      fill= Value,
-      ),
-    colour = "grey50"
-  )
-```
-
-
-
-```{r teeAgeRank, include = T, fig.cap = "Ranked travel to education, by Age"}
-ggplotly(ranked_by_age(tee, "education"))
+```{r teeAgeRank, include = T, fig.cap = "Preferred modes of travel to education, by age"}
+ggplotly(ranked_travel_modes(tee, Age, c("education", "age")))
 ```
 
 
@@ -923,7 +966,15 @@ ggplotly(ranked_by_age(tee, "education"))
 
 Since the Travel to work category is restricted by age (i.e. 15 years and over) there is no data for age groups 0-4 years, 5-19 years, and 10-14 years.
 
-```{r twoAgeRank, include = T, fig.cap = "Ranked travel to work, by Age"}
-ggplotly(ranked_by_age(two, "work"))
+```{r twoAgeRank, include = T, fig.cap = "Preferred modes of travel to work, by age"}
+ggplotly(ranked_travel_modes(two, Age, c("work", "age")))
+```
+```{r include=T, "Preferred modes of travel to education, by region"}
+ggplotly(ranked_travel_modes(tee, Location, c("education", "region")))
+```
+
+
+```{r include=T, "Preferred modes of travel to work, by region"}
+ggplotly(ranked_travel_modes(two, Location, c("work", "region")))
 ```
 
