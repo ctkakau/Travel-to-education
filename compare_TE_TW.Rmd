@@ -228,11 +228,11 @@ retrieve_api_codes <- function(df, pattern, excl = NULL, lvl = level, digits = F
 shorter_modes <- function (df, akl = F){
   if (akl){
     df <- df|> mutate(
-  Location = str_remove(Location, " Region")
+  Location = str_remove(Location, " Local Board Area")
   )
     } else {
     df <- df|> mutate(
-  Location = str_remove(Location, " Local Board Area")
+  Location = str_remove(Location, " Region")
     )
     } 
   df <- df |>
@@ -248,7 +248,6 @@ shorter_modes <- function (df, akl = F){
 )
   return(df)
 }
-shorter_modes(abe, T)
 ```
 
 ```{r fn_prop_bar}
@@ -533,7 +532,7 @@ if (!exists("tee")) {
   abe <- ade_api_data_by_key(key = abe_key, resourceId = "CEN23_TRA_001")
   # rename columns for consistency
   names(abe) <- c("Age", "Location", "Gender", "Travel_mode", "Year", "Value") #AGE EDU GEN TED YEAR VALUE
-  abe <- shorter_modes(abe)
+  abe <- shorter_modes(abe, T)
 }
 
 # extract corresponding data by key for main means of travel to work
@@ -546,7 +545,7 @@ if (!exists("two")) {
   abo <- ade_api_data_by_key(key = abo_key, resourceId = "CEN23_TRA_001")
   # rename columns for consistency
   names(abo) <- c("Age", "Location", "Gender", "Travel_mode", "Year", "Value") #AGE EDU GEN TED YEAR VALUE
-  abo <- shorter_modes(abo)
+  abo <- shorter_modes(abo, T)
 }
 ```
 
@@ -1013,6 +1012,29 @@ ranked_travel_modes(two, Age, c("work", "age")) |>
 ```
 
 
+```{r}
+df <- abo |>
+  group_by(Location, Age, Travel_mode) |>
+  summarise(Value = sum(Value, na.rm= T), .groups = "keep") |>
+  arrange(Value)
 
+ggplot(data = abo, 
+       aes(x = Location, y = Age, colour = Travel_mode)
+       ) +
+  geom_point(
+    aes(size = Value)
+    ) +
+  geom_jitter()
+
+
+
+
+```
+
+```{r}
+shapefile_query <- paste("https://datafinder.stats.govt.nz/services;key=", stats_shapefiles_key,  "/wfs/table-114916/?service=WFS&request=GetCapabilities", collapse="")
+
+
+```
 
 
