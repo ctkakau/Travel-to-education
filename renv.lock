@@ -811,6 +811,19 @@
       ],
       "Hash": "a722b946e99fd7a006ab1239c0d1b2bc"
     },
+    "ggbump": {
+      "Package": "ggbump",
+      "Version": "0.1.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "dplyr",
+        "ggplot2",
+        "purrr",
+        "tidyr"
+      ],
+      "Hash": "695abfc5a4bf0049b128e2d9f08ac7ef"
+    },
     "ggplot2": {
       "Package": "ggplot2",
       "Version": "3.5.1",

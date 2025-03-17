@@ -39,6 +39,7 @@ library(knitr) # kable
 library(ggbump)
 
 
+
 api_ade_auth_key <- "5dc60d5341c3446690edc70c8bdf67ab"
 stats_shapefiles_key <- "92c010068afb47089f76501613231717" 
 ```
@@ -275,44 +276,52 @@ prop_bar <- function(df, df_lab, x, x_lab, fill, fill_lab){
 
 
 ```{r fn_wrapped_regions}
-# use facet grid to view all modes of travel to education
-wrapped_regions <- function(df, suppress_legend = FALSE) {
-
-  # summarise Values
-  df <- df |>
-    group_by(Location, Travel_mode) |> # Location -> {{column}}
-    summarise(Value = sum(Value, na.rm = T),
-              .groups = "keep")
-
-  # create plot
-  plt <- ggplot(data = df,
-       aes(fill = Travel_mode,
-           y = Value,
-           x = Travel_mode)
-       ) +
-  geom_col(
-    position = "dodge",
-    stat = "summary",
-    fun = sum
-    ) +
-  facet_wrap(~Location) +
-  scale_y_continuous(labels = function(x) paste(x/1000, "K")) +
-  theme(
-    legend.position = {if (suppress_legend) "none" else "right"},
-    axis.text.x = element_blank()
-    )
-
-  return(plt)
-}
+# # use facet grid to view all modes of travel to education
+# wrapped_regions <- function(df, suppress_legend = FALSE) {
+# 
+#   # summarise Values
+#   df <- df |>
+#     group_by(Location, Travel_mode) |> # Location -> {{column}}
+#     summarise(Value = sum(Value, na.rm = T),
+#               .groups = "keep")
+# 
+#   # create plot
+#   plt <- ggplot(data = df,
+#        aes(fill = Travel_mode,
+#            y = Value,
+#            x = Travel_mode)
+#        ) +
+#   geom_col(
+#     position = "dodge",
+#     stat = "summary",
+#     fun = sum
+#     ) +
+#   facet_wrap(~Location) +
+#   scale_y_continuous(labels = function(x) paste(x/1000, "K")) +
+#   theme(
+#     legend.position = {if (suppress_legend) "none" else "right"},
+#     axis.text.x = element_blank()
+#     )
+# 
+#   return(plt)
+# }
 ```
 
 ```{r fn_wrapped}
 # use facet grid to view all modes of travel to education
 wrapped <- function(df, column, year = TRUE, suppress_legend = FALSE) {
   
-  # summarise Values
-  df <- df |> 
-    group_by({{column}}, Travel_mode, Year) |> 
+  # group for faceting by year
+  if (year) {
+    df <- df |> 
+    group_by({{column}}, Travel_mode, Year) 
+  } else {
+    df <- df |> 
+    group_by({{column}}, Travel_mode)
+  } 
+  
+  # summarise value for columns
+  df <- df |>
     summarise(Value = sum(Value, na.rm = T),
                         .groups = "keep")
   # create plot
@@ -325,23 +334,27 @@ wrapped <- function(df, column, year = TRUE, suppress_legend = FALSE) {
     position = "dodge",
     stat = "identity",
     ) +
-    # switch facet based on "year" or "region
+    
   scale_y_continuous(labels = function(x) paste(x/1000, "K")) +
   theme(
     legend.position = {if (suppress_legend) "none" else "right"}, 
     axis.text.x = element_blank(),
     )
+  
+  # facet based on "year"
   if (year){
     plt <- plt + facet_grid(cols =vars({{column}}), rows = vars(Year)) 
   } else {
     plt <- plt + facet_wrap(vars({{column}}))
   }
+  
   return(plt)
 }
 ```
 
 
-```{r}
+
+```{r fn_changes}
 changes <- function(df, column, pct = F){
   
   # transform data to summarise
@@ -403,13 +416,13 @@ changes <- function(df, column, pct = F){
 
 ```{r fn_ranked_travel_modes}
 ranked_travel_modes <- function(df, column, labels = c("education", "age")){
-  library(ggbump)
-
+  
   # transform data to rank by Value within age and travel_mode
   df <- df |>
     group_by({{column}}, Travel_mode) |>
     summarise(Value = sum(Value, na.rm=T), .groups = "keep" ) |>
     arrange({{column}}, desc(Value)) 
+  
   
   # switch based on labels[2]
   if (labels[2] == "age") {
@@ -422,7 +435,7 @@ ranked_travel_modes <- function(df, column, labels = c("education", "age")){
   break_labs <- seq(0, 90, 5)
   n_breaks <- length(break_labs)
   
-  
+  # create bump plot
   bump <- ggplot(data = df,
                  aes(x = Age, y = Rank, colour = Travel_mode))+
     scale_x_continuous(breaks = break_labs)
@@ -431,17 +444,21 @@ ranked_travel_modes <- function(df, column, labels = c("education", "age")){
       ungroup() |>
     mutate(
       Loc = {{column}} |> factor() |> as.numeric()
-    ) |> 
+      ) |> 
     group_by({{column}}) |>
     mutate(Rank = order(Value, decreasing = T))
     
     n_breaks <- length(unique(df$Location))
-    break_labs <- unique(df$Location)  
+    break_labs <- sort(unique(df$Location))
     
+    # create bump plot
     bump <- ggplot(data = df,
                    aes(x = Loc, y = Rank, colour = Travel_mode)) +
       theme(axis.text.x = element_text(angle = 30, vjust=0.8, hjust=0.8)) +
-    scale_x_continuous(breaks = 1:n_breaks, labels = break_labs)
+    scale_x_continuous(
+      breaks = 1:n_breaks, 
+      labels = break_labs) +
+      labs(x = "Location")
   }
   
   # generate ggplot object
@@ -463,6 +480,19 @@ htmlify <- function(plot){
   if (knitr::is_html_output()) ggplotly(plot) else plot
 }
 ```
+
+```{r fn_bundled_plots}
+# function to create multiple plots for group of regions
+bundled_plots <- function(df, bundle, column){
+  p1 <- wrapped(df|> filter(str_detect(Location, {{bundle}})), {{column}}, F) 
+  p2 <- wrapped(df|> filter(str_detect(Location, {{bundle}})), {{column}})  
+  p3 <- changes(df|> filter(str_detect(Location, {{bundle}})), {{column}}, F) 
+  p4 <- changes(df|> filter(str_detect(Location, {{bundle}})), {{column}}, T)
+  
+  return(list(p1, p2, p3, p4))
+}
+```
+
 
 ```{r key_tee}
 # retrieve information about the totals by topic so we can set up filters for future queries
@@ -985,7 +1015,7 @@ The "Other" mode is ranked sixth in Northland, Southland, Taranaki, and Waikato,
 
 ### Summary of travel to work by region  
 
-The most preferred means of travel to work across all regions was "Private vehicle", work "At home", and then "Company vehicle".  Regional results are dominated by the large population in the Auckland region, but analysis conducted across groups of similar population-sized regions generally reinforced the preferred modes, albeit at lower volumes.  Work "At home" increased between 2018 and 2023 for almost all regions (with the exception of West Coast), and along with "Private vehicle", was in the top two highest increasing modes in almost all regions, where only Wellington saw a decrease in the use of "Private vehicle". All regions saw a decrease in "Walk or jog"
+The most preferred means of travel to work across all regions was "Private vehicle", work "At home", and then "Company vehicle".  Regional results are dominated by the large population in the Auckland region, but analysis conducted across groups of similar population-sized regions generally reinforced the preferred modes, albeit at lower volumes.  Work "At home" increased between 2018 and 2023 for almost all regions (with the exception of West Coast), and along with "Private vehicle", was in the top two highest increasing modes in almost all regions, where only Wellington saw a decrease in the use of "Private vehicle". All regions saw a decrease in "Walk or jog".
 
 
 ## Preferred modes of travel by Age  
@@ -994,77 +1024,146 @@ The Travel to education data includes aggregation by age into five-year grouping
 
 ## Travel to education by Age  
 
-Figure \@ref(fig:teeAgeRank) shows several changes in preference between ages 10 to 15, ages 15 to 20
+Figure \@ref(fig:teeAgeRank) shows several changes in preference based on age and highlights shifts in preference between age 10 and 15 and again between age 15 and 20.  For ages below "15-19 years", the most preferred modes of travel to education are "Passenger", then "Walk or jog", followed by "School bus", "Bicycle".  The least preferred options in these age groups are "Private vehicle" and "Ferry".  For ages "15-19 years" the most preferred mode of travel to education is "Walk or jog" followed by "Passenger", "Public bus", driving a "Private vehicle", taking a "School bus", then "Train", "Bicycle", study "At home", "Other", and finally, "Ferry".  Driving a "Private vehicle" is the most preferred mode of transport for all remaining age groups, apart from "45-49 years" and "50-59 years", where it is second to study "At home".  
+
 
 ```{r teeAgeRank, include = T, fig.cap = "Preferred modes of travel to education, by age"}
 ranked_travel_modes(tee, Age, c("education", "age")) |> 
   htmlify()
 ```
+For "20-24 years" age group the second most preferred mode is "Public bus" followed by "Walk or jog", study "At home", "Train", "Private vehicle", "Bicycle", "Other", "School bus", and finally "Ferry".  For age groups between "25-29 years" to "75-79 years" the top four modes of transport are consistent, with driving a "Private vehicle" as most preferred, then study "At home" (except the "45-50 years" and "50-54 years" age group), followed by "Public bus" and then "Walk or jog".  "Passenger" was the fifth option for all age groups from "30-34 years" to "75-79 years".  "Bicycle" is sixth most preferred option for "30-34 years" through to "70-74 years" age groups, except for the "45-49 years" where it is seventh, behind "Other".  
 
 
 ## Travel to work by Age  
 
-Since the Travel to work category is restricted by age (i.e. 15 years and over) there is no data for age groups 0-4 years, 5-19 years, and 10-14 years.
+Since the Travel to work category is restricted by age (i.e. 15 years and over) there is no data for age groups 0-4 years, 5-9 years, and 10-14 years.
 
 ```{r twoAgeRank, include = T, fig.cap = "Preferred modes of travel to work, by age"}
 ranked_travel_modes(two, Age, c("work", "age")) |> 
   htmlify()
 ```
+# Analysis of Auckland Local Boards  
 
-
-```{r}
-df <- abo |>
-  group_by(Location, Age, Travel_mode) |>
-  summarise(Value = sum(Value, na.rm= T), .groups = "keep") |>
-  arrange(Value)
-
-ggplot(data = abo, 
-       aes(x = Location, y = Age, colour = Travel_mode)
-       ) +
-  geom_point(
-    aes(size = Value)
-    ) +
-  geom_jitter()
+```{r akbGroups}
+# grouped Auckland local boards
+akb1 <- "aitem|owic|bert-"
+akb2 <- "per H|bisc|ender|ara-P"
+akb3 <- "kei|vonp|nkli|tiki"
+akb4 <- "urew|Whau|gere-|kiekie"
+akb5 <- "odn|paku|Puke|kere"
+akb6 <- "aihe|eat "
 ```
+
+```{r abe1, include=T, fig.cap="Travel to education: Mt Albert, Howick, Waitematā"}
+# plots for Waitemata, Howick, Mt Albert
+akb <- abe |> filter(str_detect(Location, akb1))
+wrapped(akb, Location, F) |> htmlify()
+wrapped(akb, Location) |> htmlify()
+changes(akb, Location, F) |> htmlify()
+changes(akb, Location, T) |> htmlify()
+```
+
+```{r abe2, include=T, fig.cap="Travel to education: Henderson, Hibiscus and Bays, Ōtara-Papatoetoe, Upper Harbour"}
+# plots for Henderson...
+akb <- abe |> filter(str_detect(Location, akb2))
+wrapped(akb, Location, F) |> htmlify()
+wrapped(akb, Location) |> htmlify()
+changes(akb, Location, F) |> htmlify()
+changes(akb, Location, T) |> htmlify()
+```
+
+
+```{r abe3, include=T, fig.cap="Travel to education: Devonport, Franklin, Kaipātiki, Ōrākei, "}
+# plots for Devonport
+akb <- abe |> filter(str_detect(Location, akb3))
+wrapped(akb, Location, F) |> htmlify()
+wrapped(akb, Location) |> htmlify()
+changes(akb, Location, F) |> htmlify()
+changes(akb, Location, T) |> htmlify()
+```
+
+
+```{r abe4, include=T, fig.cap="Travel to education: Māngere-Ōtāhuhu, Manurewa, Maungakiekie-Tāmaki, Whau"}
+# plots for Mangere
+akb <- abe |> filter(str_detect(Location, akb4))
+wrapped(akb, Location, F) |> htmlify()
+wrapped(akb, Location) |> htmlify()
+changes(akb, Location, F) |> htmlify()
+changes(akb, Location, T) |> htmlify()
+```
+
+
+```{r abe5, include=T, fig.cap="Travel to education: Papakura, Puketāpapa, Rodney, Waitākere"}
+# plots for Papakura
+akb <- abe |> filter(str_detect(Location, akb5))
+wrapped(akb, Location, F) |> htmlify()
+wrapped(akb, Location) |> htmlify()
+changes(akb, Location, F) |> htmlify()
+changes(akb, Location, T) |> htmlify()
+```
+
+
+```{r abe6, include=T, fig.cap="Travel to education: Waiheke, Aotea/Great Barrier"}
+# plots for Mangere
+akb <- abe |> filter(str_detect(Location, akb6))
+wrapped(akb, Location, F) |> htmlify()
+wrapped(akb, Location) |> htmlify()
+changes(akb, Location, F) |> htmlify()
+changes(akb, Location, T) |> htmlify()
+```
+
+
 
 ```{r}
 shapefile_query <- paste("https://datafinder.stats.govt.nz/services;key=", stats_shapefiles_key,  "/wfs/table-114916/?service=WFS&request=GetCapabilities", collapse="")
 ```
 
 
-```{r}
+
+
+
+
+```{r include=T, fig.cap="Travel to work, Auckland, all modes"}
+# all Travel to work, Auckland
 wrapped(abo, Location, F) |> 
   htmlify()
-
-# abo |> 
-#   group_by(Location) |> 
-#   summarise(Value = sum(Value, na.rm=T), .groups = "keep") |>
-#   arrange(-Value)
-akb1 <- "aitem|owic|bert-"
-akb2 <- "owic|bert-"
-akb3 <- "per H|bisc|ender|ara-P"
-akb4 <- "kei|vonp|nkli|tiki"
-akb5 <- "urew|Whau|gere-|kiekie"
-akb6 <- "odn|paku|Puke|Wait"
-akb7 <- "aihe|eat "
-
-wrapped(abo|> filter(str_detect(Location, akb1)), Location, F) |> 
-htmlify()
-
 ```
 
 
-```{r}
-# wrapped(abo|> filter(str_detect(Location, rgn3)), Location, F) |> 
-# +   htmlify()
-# > wrapped(two|> filter(str_detect(Location, rgn3)), Location) |> 
-# +   htmlify()
-# > changes(two|> filter(str_detect(Location, rgn3)), Location, F)  |> 
-# +   htmlify()
-# > changes(two|> filter(str_detect(Location, rgn3)), Location, T)  |> 
-# +   htmlify()
-# > ranked_travel_modes(two, Location, c("work", "region")) |> 
-# +   htmlify()
+```{r, include = T, fig.cap="Travel to work, preferred modes of travel to work: Auckland local boards"}
+# preferred modes of travel, by Auckland local boar
+ranked_travel_modes(abo, Location, c("work", "Auckland local board")) |>
+  htmlify()
+```
+
+```{r fn3Dplots, include=T, fig.cap="Travel to education: 3D plot"}
+# assume grouping by Location
+df <- tee |>
+  group_by(Location, Travel_mode, Year) |>
+  summarise(Value = sum(Value, na.rm = T),
+            .groups = "keep") |>
+  pivot_wider(id_cols = c(Location, Travel_mode),
+              names_from = Year,
+              values_from = Value
+              ) |>
+  mutate(
+    difference = `2023`- `2018`,
+    pct_change = (`2023`-`2018`)/`2018`,
+    total = `2023`+`2018`
+  )
+
+plt <- plot_ly(df, 
+               type = "scatter3d",
+               mode = "markers",
+               x = ~Location, y = ~pct_change, z = ~difference,
+               color = ~Travel_mode, 
+               size = ~total, 
+               sizes=c(10, 100), 
+               marker = list(
+                 symbol = 'circle',
+                 sizemode = 'diameter') 
+)
+plt
 ```
 
 
