@@ -481,15 +481,71 @@ htmlify <- function(plot){
 }
 ```
 
-```{r fn_bundled_plots}
-# function to create multiple plots for group of regions
-bundled_plots <- function(df, bundle, column){
-  p1 <- wrapped(df|> filter(str_detect(Location, {{bundle}})), {{column}}, F) 
-  p2 <- wrapped(df|> filter(str_detect(Location, {{bundle}})), {{column}})  
-  p3 <- changes(df|> filter(str_detect(Location, {{bundle}})), {{column}}, F) 
-  p4 <- changes(df|> filter(str_detect(Location, {{bundle}})), {{column}}, T)
+```{r fn_travel_3d}
+# function to create 3d scatter plot to show total change, percent change, total count, by Location and travel mode
+travel_3d <- function(df, labs = c("education", "all regions")) {
   
-  return(list(p1, p2, p3, p4))
+  # convert the data
+  df <- df |>
+    group_by(Location, Travel_mode, Year) |>
+    summarise(Value = sum(Value, na.rm = T),
+              .groups = "keep") |>
+    pivot_wider(id_cols = c(Location, Travel_mode),
+                names_from = Year,
+                values_from = Value
+                ) |>
+    mutate(
+      difference = `2023`- `2018`,
+      pct_change = (`2023`-`2018`)/`2018`,
+      total = `2023`+`2018`
+    )
+  
+  # create 3d scatter plot
+  plt <- plot_ly(df, 
+                 type = "scatter3d",
+                 mode = "markers",
+                 x = ~Location, y = ~pct_change, z = ~difference,
+                 color = ~Travel_mode, 
+                 size = ~total,
+                 sizes=c(10, 100),
+                 text = ~paste("Total:", total),
+                 marker = list(
+                   
+                   symbol = 'circle',
+                   sizemode = 'diameter') 
+  )
+  
+  # add annotations
+  plt <- plt %>% 
+    layout(
+      title= paste0("Travel to ", labs[1], ", ", labs[2],": percent and total change 2018-2023"),
+      scene= list(
+        xaxis = list(
+          title= "Location",
+          gridcolor = "rgb(255, 255, 255)",
+          zerolinewidth = 1,
+          ticklen = 5,
+          gridwidth = 2, 
+          tickvals = ~factor(Location),
+          ticktext = ~Location),
+        yaxis = list(
+          title= "% change",
+          gridcolor = "rgb(255, 255, 255)",
+          zerolinewidth = 1,
+          ticklen = 5, 
+          gridwidth = 2),
+        zaxis = list(
+          title= "total change",
+          gridcolor = "rgb(255, 255, 255)",
+          zerolinewidth = 1,
+          ticklen = 5, 
+          gridwidth = 2)
+        
+        )
+      )
+      
+  # return plot
+  return(plt)
 }
 ```
 
@@ -1042,7 +1098,32 @@ Since the Travel to work category is restricted by age (i.e. 15 years and over) 
 ranked_travel_modes(two, Age, c("work", "age")) |> 
   htmlify()
 ```
-# Analysis of Auckland Local Boards  
+
+
+### 3-dimensional scatter plots  
+
+The 3D plot in figure \@ref(fig:tee3D) provides an interactive view of the travel to education data by:  
+  - using the colour of the marker to indicate the mode of travel
+  - using the size of the marker to represent the combined count for years 2018 and 2023, for each mode of travel at each location
+  - presenting locations along one axis
+  - presenting the difference between years 2018 and 2023 along another axis
+  - presenting the percentage change between years 2018 and 2023 along a third axis
+  - changing the viewing perspective by zooming, panning, or rotating the plot.
+  
+Figure \@ref(fig:tee3D) shows counts for each mode of travel to education (size of circle), for each region, with one access showing the absolute change and another access showing the percentage change between 2018 and 2023.  The plot reinforces earlier analysis, showing the largest absolute increases between 2018 and 2023 occur for "Passenger" and study "At home", and the largest absolute decreases occur for "Walk or jog".  The largest percentage changes occur for "Ferry", "Train" and "Public bus", but in most regions, these modes have very low counts so even small absolute changes can result in high percentage changes.  The plot is dominated by high counts in the Auckland region and extreme percentage changes for "Train" and "Ferry" modes of travel, but allows the user to filter by mode. 
+
+```{r tee3D, include=T, fig.cap="Travel to education for all regions: 3D interactive plot showing total count for mode of travel to education, by Location, difference, and percent change between 2018-2023"}
+travel_3d(tee, c("education", "all regions"))
+```
+
+Similarly, figure \@ref(fig:two3D) presents the travel to work data for all regions, and reinforces the earlier findings that the largest absolute increases occur for work "At home", the largest absolute decrease was for "Train", "Public bus", "Walk or jog", and "Private vehicle" (driven mainly by decreases in Auckland)
+
+
+```{r two3D, include=T, fig.cap="Travel to work for all regions: 3D interactive plot showing total count for mode of travel to education, by Location, difference, and percent change between 2018-2023"}
+travel_3d(two, c("work", "all regions"))
+```
+
+## Analysis of Auckland Local Boards  
 
 ```{r akbGroups}
 # grouped Auckland local boards
@@ -1053,6 +1134,49 @@ akb4 <- "urew|Whau|gere-|kiekie"
 akb5 <- "odn|paku|Puke|kere"
 akb6 <- "aihe|eat "
 ```
+
+The Auckland region holds a much higher population than any other region, nearly as much as the next three largest regions combined.  The Auckland region comprises several local boards, many of which, have populations comparable to some regions throughout the rest of the country.  This section conducts a brief analysis of the Auckland region and it's local boards.
+
+
+```{r ake, include=T, fig.cap="Travel to education, Auckland local boards, all modes"}
+# all Travel to work, Auckland
+wrapped(abe, Location, F) |> 
+  htmlify()
+```
+
+```{r rankedAbe, include = T, fig.cap="Preferred modes of travel to education: Auckland local boards"}
+# preferred modes of travel, by Auckland local board
+ranked_travel_modes(abe, Location, c("education", "Auckland local board")) |>
+  htmlify()
+```
+
+```{r abe3D, include=T, fig.cap="Travel to education: 3D interactive plot showing total count for mode of travel to education, by Location, difference, and percent change between 2018-2023"}
+travel_3d(abe, c("education", "Auckland local boards"))
+```
+
+```{r ako, include=T, fig.cap="Travel to work, Auckland local boards, all modes"}
+# all Travel to work, Auckland
+wrapped(abo, Location, F) |> 
+  htmlify()
+```
+
+
+
+```{r rankedAbo, include = T, fig.cap="Preferred modes of travel to work: Auckland local boards"}
+# preferred modes of travel, by Auckland local board
+ranked_travel_modes(abo, Location, c("work", "Auckland local board")) |>
+  htmlify()
+```
+
+```{r abo3D, include=T, fig.cap="Travel to work: 3D interactive plot showing total count for mode of travel to education, by Location, difference, and percent change between 2018-2023"}
+travel_3d(abo, c("work", "Auckland local boards"))
+```
+
+
+
+
+
+
 
 ```{r abe1, include=T, fig.cap="Travel to education: Mt Albert, Howick, Waitematā"}
 # plots for Waitemata, Howick, Mt Albert
@@ -1123,47 +1247,6 @@ shapefile_query <- paste("https://datafinder.stats.govt.nz/services;key=", stats
 
 
 
-```{r include=T, fig.cap="Travel to work, Auckland, all modes"}
-# all Travel to work, Auckland
-wrapped(abo, Location, F) |> 
-  htmlify()
-```
 
-
-```{r, include = T, fig.cap="Travel to work, preferred modes of travel to work: Auckland local boards"}
-# preferred modes of travel, by Auckland local boar
-ranked_travel_modes(abo, Location, c("work", "Auckland local board")) |>
-  htmlify()
-```
-
-```{r fn3Dplots, include=T, fig.cap="Travel to education: 3D plot"}
-# assume grouping by Location
-df <- tee |>
-  group_by(Location, Travel_mode, Year) |>
-  summarise(Value = sum(Value, na.rm = T),
-            .groups = "keep") |>
-  pivot_wider(id_cols = c(Location, Travel_mode),
-              names_from = Year,
-              values_from = Value
-              ) |>
-  mutate(
-    difference = `2023`- `2018`,
-    pct_change = (`2023`-`2018`)/`2018`,
-    total = `2023`+`2018`
-  )
-
-plt <- plot_ly(df, 
-               type = "scatter3d",
-               mode = "markers",
-               x = ~Location, y = ~pct_change, z = ~difference,
-               color = ~Travel_mode, 
-               size = ~total, 
-               sizes=c(10, 100), 
-               marker = list(
-                 symbol = 'circle',
-                 sizemode = 'diameter') 
-)
-plt
-```
 
 
